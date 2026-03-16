@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   PackageOpen, 
   AlertTriangle, 
@@ -13,52 +13,87 @@ import {
   LogOut
 } from "lucide-react";
 import { useNavigate } from "react-router";
-
-// ============================================================================
-// DATABASE INTEGRATION: PostgreSQL
-// ============================================================================
-// TODO: Replace these empty arrays with actual database queries
-// 
-// REQUESTS TABLE SCHEMA SUGGESTION:
-// - id (VARCHAR/UUID PRIMARY KEY)
-// - requester_name (VARCHAR)
-// - email (VARCHAR)
-// - department (VARCHAR)
-// - items (JSONB or separate items table with foreign key)
-// - date (TIMESTAMP)
-// - status (VARCHAR: 'pending', 'approved', 'rejected', 'completed')
-// - priority (VARCHAR: 'low', 'medium', 'high')
-// - read (BOOLEAN)
-// - created_at (TIMESTAMP)
-//
-// EXAMPLE QUERY: 
-// const mockRequests = await db.query('SELECT * FROM requests ORDER BY created_at DESC LIMIT 10');
-// ============================================================================
-
-const mockRequests: any[] = [];
-
-// ============================================================================
-// DATABASE INTEGRATION: PostgreSQL
-// ============================================================================
-// TODO: Replace this empty array with actual database query for low stock items
-//
-// INVENTORY TABLE - Low Stock Query:
-// const lowStockItems = await db.query(
-//   'SELECT name, current_stock as current, minimum_stock as minimum, unit, category 
-//    FROM inventory 
-//    WHERE current_stock < minimum_stock 
-//    ORDER BY (current_stock::float / minimum_stock::float) ASC 
-//    LIMIT 5'
-// );
-// ============================================================================
-
-const lowStockItems: any[] = [];
+import { supabase } from "../../supabaseClient";
 
 export function Dashboard() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Data states
+  const [requests, setRequests] = useState<any[]>([]);
+  const [lowStockItems, setLowStockItems] = useState<any[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [completedToday, setCompletedToday] = useState(0);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchRequests(),
+        fetchLowStockItems(),
+        fetchTotalItems(),
+        fetchCompletedToday(),
+      ]);
+    } catch (error) {
+      console.error("Failed to load dashboard data", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchRequests = async () => {
+    const { data, error } = await supabase
+      .from("requests")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (error) return console.error(error);
+    setRequests(data || []);
+  };
+
+  const fetchLowStockItems = async () => {
+    // Items where remaining_stock is 0 or very low (adjust threshold as needed)
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("item_no, description, unit, remaining_stock")
+      .lte("remaining_stock", 10)
+      .order("remaining_stock", { ascending: true })
+      .limit(5);
+
+    if (error) return console.error(error);
+    setLowStockItems(data || []);
+  };
+
+  const fetchTotalItems = async () => {
+    const { count, error } = await supabase
+      .from("inventory")
+      .select("*", { count: "exact", head: true });
+
+    if (error) return console.error(error);
+    setTotalItems(count || 0);
+  };
+
+  const fetchCompletedToday = async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const { count, error } = await supabase
+      .from("requests")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "approved")
+      .gte("created_at", today.toISOString());
+
+    if (error) return console.error(error);
+    setCompletedToday(count || 0);
+  };
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -67,56 +102,43 @@ export function Dashboard() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => {
-    navigate("/admin/login");
-  };
-
-  // ============================================================================
-  // DATABASE INTEGRATION: Stats calculation from PostgreSQL
-  // ============================================================================
-  // TODO: Replace these hardcoded values with actual database aggregations
-  // EXAMPLE QUERIES:
-  // const pendingCount = await db.query('SELECT COUNT(*) FROM requests WHERE status = $1', ['pending']);
-  // const totalItems = await db.query('SELECT COUNT(*) FROM inventory');
-  // const lowStockCount = await db.query('SELECT COUNT(*) FROM inventory WHERE current_stock < minimum_stock');
-  // const completedToday = await db.query('SELECT COUNT(*) FROM requests WHERE status = $1 AND DATE(created_at) = CURRENT_DATE', ['completed']);
-  // ============================================================================
+  const handleLogout = () => navigate("/admin/login");
 
   const stats = [
     {
       label: "Pending Requests",
-      value: mockRequests.filter(r => r.status === "pending").length || 0,
+      value: loading ? "..." : requests.filter(r => r.status === "pending").length,
       icon: Clock,
       color: "bg-orange-500",
       trend: "+0%",
     },
     {
       label: "Total Items",
-      value: "0",
+      value: loading ? "..." : totalItems,
       icon: PackageOpen,
       color: "bg-blue-500",
       trend: "+0%",
     },
     {
       label: "Low Stock Items",
-      value: lowStockItems.length || 0,
+      value: loading ? "..." : lowStockItems.length,
       icon: AlertTriangle,
       color: "bg-red-500",
       trend: "+0%",
     },
     {
       label: "Completed Today",
-      value: "0",
+      value: loading ? "..." : completedToday,
       icon: TrendingUp,
       color: "bg-green-500",
       trend: "+0%",
     },
   ];
 
-  const filteredRequests = mockRequests.filter(req =>
-    req.requester.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    req.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    req.department.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredRequests = requests.filter(req =>
+    (req.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+    (req.id?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+    (req.department?.toLowerCase() || "").includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -133,7 +155,6 @@ export function Dashboard() {
               <p className="text-xs text-gray-500">Admin Portal</p>
             </div>
           </div>
-
           <button
             onClick={handleLogout}
             className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -156,19 +177,12 @@ export function Dashboard() {
           {menuItems.map((item) => {
             const Icon = item.icon;
             const active = item.path === "/admin";
-            
             return (
               <button
                 key={item.path}
-                onClick={() => {
-                  setIsSidebarPinned(true);
-                  setIsSidebarExpanded(true);
-                  navigate(item.path);
-                }}
+                onClick={() => { setIsSidebarPinned(true); setIsSidebarExpanded(true); navigate(item.path); }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                  active
-                    ? "bg-[#4A89B0] text-white shadow-md"
-                    : "text-gray-700 hover:bg-gray-100"
+                  active ? "bg-[#4A89B0] text-white shadow-md" : "text-gray-700 hover:bg-gray-100"
                 }`}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
@@ -189,6 +203,7 @@ export function Dashboard() {
       }`}>
         <div className="p-4 lg:p-8">
           <div className="space-y-6">
+
             {/* Header */}
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
@@ -216,7 +231,8 @@ export function Dashboard() {
 
             {/* Main Content Grid */}
             <div className="grid lg:grid-cols-3 gap-6">
-              {/* Inbox Preview - Gmail-like */}
+
+              {/* Recent Requests */}
               <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100">
                 <div className="p-6 border-b border-gray-100">
                   <div className="flex items-center justify-between mb-4">
@@ -224,19 +240,16 @@ export function Dashboard() {
                       <Bell className="w-5 h-5 text-[#4A89B0]" />
                       <h2 className="text-xl font-bold text-gray-900">Recent Requests</h2>
                       <span className="bg-red-500 text-white text-xs px-2 py-1 rounded-full">
-                        {mockRequests.filter(r => !r.read).length} new
+                        {requests.filter(r => r.status === "pending").length} pending
                       </span>
                     </div>
                     <button
                       onClick={() => navigate("/admin/inbox")}
                       className="text-[#4A89B0] hover:text-[#3776A0] text-sm font-medium flex items-center gap-1"
                     >
-                      View All
-                      <ChevronRight className="w-4 h-4" />
+                      View All <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
-
-                  {/* Search */}
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input
@@ -249,53 +262,58 @@ export function Dashboard() {
                   </div>
                 </div>
 
-                {/* Request List */}
                 <div className="divide-y divide-gray-100">
-                  {filteredRequests.slice(0, 5).map((request) => (
-                    <div
-                      key={request.id}
-                      className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
-                        !request.read ? "bg-blue-50/50" : ""
-                      }`}
-                      onClick={() => navigate("/admin/inbox")}
-                    >
-                      <div className="flex items-start gap-4">
-                        {/* Status Indicator */}
-                        <div className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
-                          !request.read ? "bg-blue-600" : "bg-gray-300"
-                        }`} />
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-4 mb-1">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-semibold ${!request.read ? "text-gray-900" : "text-gray-700"}`}>
-                                {request.requester}
+                  {loading ? (
+                    <div className="p-8 text-center text-gray-400">Loading requests...</div>
+                  ) : filteredRequests.length === 0 ? (
+                    <div className="p-8 text-center text-gray-400">No requests found</div>
+                  ) : (
+                    filteredRequests.slice(0, 5).map((request) => (
+                      <div
+                        key={request.id}
+                        className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
+                          request.status === "pending" ? "bg-blue-50/50" : ""
+                        }`}
+                        onClick={() => navigate("/admin/inbox")}
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
+                            request.status === "pending" ? "bg-blue-600" : "bg-gray-300"
+                          }`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-4 mb-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-gray-900">{request.requested_by}</span>
+                                <span className="text-xs text-gray-500">({request.department})</span>
+                              </div>
+                              <span className="text-xs text-gray-500 whitespace-nowrap">
+                                {new Date(request.created_at).toLocaleDateString()}
                               </span>
-                              <span className="text-xs text-gray-500">({request.department})</span>
-                              {request.priority === "high" && (
-                                <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded">
-                                  High Priority
-                                </span>
-                              )}
                             </div>
-                            <span className="text-xs text-gray-500 whitespace-nowrap">{request.date}</span>
-                          </div>
-                          
-                          <div className="text-sm text-gray-600 mb-1">
-                            Request ID: <span className="font-mono">{request.id}</span>
-                          </div>
-                          
-                          <div className="text-sm text-gray-700">
-                            Items: {request.items.join(", ")}
+                            <div className="text-sm text-gray-600 mb-1">
+                              Request ID: <span className="font-mono">{request.id.slice(0, 8)}...</span>
+                            </div>
+                            <div className="text-sm text-gray-700">
+                              Item: {request.description} — Qty: {request.quantity_requested} {request.unit}
+                            </div>
+                            <div className="mt-1">
+                              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                                request.status === "pending" ? "bg-orange-100 text-orange-700" :
+                                request.status === "approved" ? "bg-green-100 text-green-700" :
+                                "bg-red-100 text-red-700"
+                              }`}>
+                                {request.status}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* Priority Overview - Low Stock Items */}
+              {/* Low Stock Items */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-100">
                 <div className="p-6 border-b border-gray-100">
                   <div className="flex items-center justify-between mb-2">
@@ -307,52 +325,54 @@ export function Dashboard() {
                       onClick={() => navigate("/admin/inventory")}
                       className="text-[#4A89B0] hover:text-[#3776A0] text-sm font-medium flex items-center gap-1"
                     >
-                      View All
-                      <ChevronRight className="w-4 h-4" />
+                      View All <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
                   <p className="text-sm text-gray-600">Items with lowest stock levels</p>
                 </div>
 
                 <div className="p-4 space-y-3">
-                  {lowStockItems.map((item, index) => {
-                    const percentage = (item.current / item.minimum) * 100;
-                    
-                    return (
-                      <div key={index} className="p-3 bg-red-50 border border-red-100 rounded-lg">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <div className="font-semibold text-gray-900 text-sm">{item.name}</div>
-                            <div className="text-xs text-gray-600">{item.category}</div>
+                  {loading ? (
+                    <div className="text-center text-gray-400 py-4">Loading...</div>
+                  ) : lowStockItems.length === 0 ? (
+                    <div className="text-center text-gray-400 py-4">All items are well stocked!</div>
+                  ) : (
+                    lowStockItems.map((item, index) => {
+                      // Use 10 as the minimum threshold for progress bar
+                      const minimum = 10;
+                      const percentage = Math.min((item.remaining_stock / minimum) * 100, 100);
+                      return (
+                        <div key={index} className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <div className="font-semibold text-gray-900 text-sm">{item.description}</div>
+                              <div className="text-xs text-gray-600">{item.item_no}</div>
+                            </div>
+                            <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
+                              {item.remaining_stock} {item.unit}
+                            </span>
                           </div>
-                          <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
-                            {item.current} {item.unit}
-                          </span>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-xs text-gray-600">
+                              <span>Stock Level</span>
+                              <span>{Math.round(percentage)}%</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div
+                                className={`h-2 rounded-full ${
+                                  percentage < 30 ? "bg-red-600" : percentage < 60 ? "bg-orange-500" : "bg-green-500"
+                                }`}
+                                style={{ width: `${percentage}%` }}
+                              />
+                            </div>
+                          </div>
                         </div>
-                        
-                        {/* Progress Bar */}
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between text-xs text-gray-600">
-                            <span>Stock Level</span>
-                            <span>{Math.round(percentage)}%</span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div
-                              className={`h-2 rounded-full ${
-                                percentage < 30 ? "bg-red-600" : percentage < 60 ? "bg-orange-500" : "bg-green-500"
-                              }`}
-                              style={{ width: `${Math.min(percentage, 100)}%` }}
-                            />
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            Minimum required: {item.minimum} {item.unit}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               </div>
+
             </div>
           </div>
         </div>

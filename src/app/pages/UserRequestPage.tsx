@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PackageOpen, Send, User, Lock, ChevronRight, ChevronLeft, Check, Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
+import { supabase } from "../../supabaseClient";
 
 interface RequestItem {
   id: string;
@@ -22,7 +23,8 @@ interface PersonalInfo {
 export function UserRequestPage() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
-  
+  const [submitting, setSubmitting] = useState(false);
+
   const [personalInfo, setPersonalInfo] = useState<PersonalInfo>({
     fullName: "",
     userType: "",
@@ -37,18 +39,8 @@ export function UserRequestPage() {
   ]);
 
   const units = [
-    "Piece/s",
-    "Box/es",
-    "Ream/s",
-    "Pack/s",
-    "Set/s",
-    "Bottle/s",
-    "Roll/s",
-    "Sheet/s",
-    "Dozen",
-    "Kilogram",
-    "Liter",
-    "Meter",
+    "Piece/s", "Box/es", "Ream/s", "Pack/s", "Set/s",
+    "Bottle/s", "Roll/s", "Sheet/s", "Dozen", "Kilogram", "Liter", "Meter",
   ];
 
   const handleAddItem = () => {
@@ -73,17 +65,14 @@ export function UserRequestPage() {
       toast.error("Please fill in all required fields");
       return false;
     }
-    
     if (personalInfo.userType === "student" && (!personalInfo.studentNumber || !personalInfo.college)) {
       toast.error("Please enter your student number and college");
       return false;
     }
-    
     if (personalInfo.userType === "faculty" && (!personalInfo.facultyId || !personalInfo.department)) {
       toast.error("Please enter your faculty ID and department");
       return false;
     }
-    
     return true;
   };
 
@@ -91,37 +80,85 @@ export function UserRequestPage() {
     const hasEmptyItems = items.some(
       (item) => !item.itemDescription || !item.unitOfMeasure || item.quantity < 1
     );
-    
     if (hasEmptyItems) {
       toast.error("Please fill in all item details");
       return false;
     }
-    
     return true;
   };
+
+  const handleSubmitToSupabase = async () => {
+  setSubmitting(true);
+
+  try {
+    const department = personalInfo.userType === "faculty"
+      ? personalInfo.department
+      : personalInfo.college;
+
+    for (const item of items) {
+      // 1. Fetch by item_no instead of description
+      const { data: inventoryItem, error: fetchError } = await supabase
+        .from("inventory")
+        .select("item_no, description, unit, remaining_stock")
+        .eq("item_no", item.id)  // ← uses the ID field the user typed
+        .single();
+
+      if (fetchError || !inventoryItem) {
+        toast.error(`Item ID "${item.id}" was not found in inventory`);
+        setSubmitting(false);
+        return;
+      }
+
+      // 2. Cross-check quantity against remaining stock
+      if (item.quantity > inventoryItem.remaining_stock) {
+        toast.error(
+          `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      // 3. Insert request
+      const { error: insertError } = await supabase
+        .from("requests")
+        .insert({
+          item_no: inventoryItem.item_no,
+          description: inventoryItem.description,  // auto-filled from inventory
+          unit: inventoryItem.unit,                 // auto-filled from inventory
+          quantity_requested: item.quantity,
+          requested_by: personalInfo.fullName,
+          department: department,
+          status: "pending",
+        });
+
+      if (insertError) {
+        toast.error(`Failed to submit request for: ${inventoryItem.description}`);
+        console.error(insertError);
+        setSubmitting(false);
+        return;
+      }
+    }
+
+    setCurrentStep(3);
+
+  } catch (error) {
+    toast.error("Something went wrong. Please try again.");
+    console.error(error);
+  } finally {
+    setSubmitting(false);
+  }
+};
 
   const handleNextStep = () => {
     if (currentStep === 1 && validateStep1()) {
       setCurrentStep(2);
     } else if (currentStep === 2 && validateStep2()) {
-      // Submit the request
-      console.log("Request submitted:", { personalInfo, items, timestamp: new Date() });
-      /* PostgreSQL Integration:
-       * INSERT INTO requests (full_name, user_type, student_number, faculty_id, college_department, status, created_at)
-       * VALUES ($1, $2, $3, $4, $5, 'pending', NOW()) RETURNING id;
-       * 
-       * Then for each item:
-       * INSERT INTO request_items (request_id, item_description, unit_of_measure, quantity)
-       * VALUES ($1, $2, $3, $4);
-       */
-      setCurrentStep(3);
+      handleSubmitToSupabase();
     }
   };
 
   const handlePrevStep = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    }
+    if (currentStep > 1) setCurrentStep(currentStep - 1);
   };
 
   const handleStartNewRequest = () => {
@@ -139,7 +176,7 @@ export function UserRequestPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Admin Access Button - Fixed Position */}
+      {/* Admin Access Button */}
       <button
         onClick={() => navigate("/admin/login")}
         className="fixed bottom-4 right-4 bg-gray-800 hover:bg-gray-900 text-white p-4 rounded-full shadow-lg transition-all hover:scale-110 z-50 group"
@@ -171,51 +208,31 @@ export function UserRequestPage() {
         {/* Progress Indicator */}
         <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
-                currentStep >= 1 ? "bg-[#4A89B0] text-white" : "bg-gray-200 text-gray-600"
-              }`}>
-                1
-              </div>
-              <span className={`font-medium ${currentStep >= 1 ? "text-gray-900" : "text-gray-500"}`}>
-                Personal Info
-              </span>
-            </div>
-            
-            <div className="flex-1 h-1 mx-4 bg-gray-200">
-              <div className={`h-full transition-all ${currentStep >= 2 ? "bg-[#4A89B0] w-full" : "bg-gray-200 w-0"}`}></div>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
-                currentStep >= 2 ? "bg-[#4A89B0] text-white" : "bg-gray-200 text-gray-600"
-              }`}>
-                2
-              </div>
-              <span className={`font-medium ${currentStep >= 2 ? "text-gray-900" : "text-gray-500"}`}>
-                Request Materials
-              </span>
-            </div>
-            
-            <div className="flex-1 h-1 mx-4 bg-gray-200">
-              <div className={`h-full transition-all ${currentStep >= 3 ? "bg-[#4A89B0] w-full" : "bg-gray-200 w-0"}`}></div>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
-                currentStep >= 3 ? "bg-[#4A89B0] text-white" : "bg-gray-200 text-gray-600"
-              }`}>
-                3
-              </div>
-              <span className={`font-medium ${currentStep >= 3 ? "text-gray-900" : "text-gray-500"}`}>
-                Confirmation
-              </span>
-            </div>
+            {[1, 2, 3].map((step, index) => (
+              <>
+                <div key={step} className="flex items-center gap-2">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
+                    currentStep >= step ? "bg-[#4A89B0] text-white" : "bg-gray-200 text-gray-600"
+                  }`}>
+                    {step}
+                  </div>
+                  <span className={`font-medium ${currentStep >= step ? "text-gray-900" : "text-gray-500"}`}>
+                    {step === 1 ? "Personal Info" : step === 2 ? "Request Materials" : "Confirmation"}
+                  </span>
+                </div>
+                {index < 2 && (
+                  <div className="flex-1 h-1 mx-4 bg-gray-200">
+                    <div className={`h-full transition-all ${currentStep > step ? "bg-[#4A89B0] w-full" : "w-0"}`} />
+                  </div>
+                )}
+              </>
+            ))}
           </div>
         </div>
 
         {/* Step Content */}
         <div className="bg-white rounded-2xl shadow-xl p-8 lg:p-12">
+
           {/* Step 1: Personal Information */}
           {currentStep === 1 && (
             <div className="space-y-6">
@@ -223,12 +240,9 @@ export function UserRequestPage() {
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Personal Information</h2>
                 <p className="text-gray-600">Please provide your details to continue</p>
               </div>
-
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Full Name *
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input
@@ -242,9 +256,7 @@ export function UserRequestPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    I am a *
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">I am a *</label>
                   <div className="grid grid-cols-2 gap-4">
                     <button
                       type="button"
@@ -273,9 +285,7 @@ export function UserRequestPage() {
 
                 {personalInfo.userType === "student" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Student Number *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Student Number *</label>
                     <input
                       type="text"
                       value={personalInfo.studentNumber}
@@ -288,9 +298,7 @@ export function UserRequestPage() {
 
                 {personalInfo.userType === "faculty" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Faculty ID *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Faculty ID *</label>
                     <input
                       type="text"
                       value={personalInfo.facultyId}
@@ -303,9 +311,7 @@ export function UserRequestPage() {
 
                 {personalInfo.userType === "student" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      College *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">College *</label>
                     <select
                       value={personalInfo.college}
                       onChange={(e) => setPersonalInfo({ ...personalInfo, college: e.target.value })}
@@ -325,9 +331,7 @@ export function UserRequestPage() {
 
                 {personalInfo.userType === "faculty" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Department *
-                    </label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Department *</label>
                     <select
                       value={personalInfo.department}
                       onChange={(e) => setPersonalInfo({ ...personalInfo, department: e.target.value })}
@@ -367,10 +371,9 @@ export function UserRequestPage() {
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Request Materials</h2>
-                <p className="text-gray-600">Add the items you need</p>
+                <p className="text-gray-600">Add the items you need. Item descriptions must match inventory exactly.</p>
               </div>
 
-              {/* Items Table */}
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -413,9 +416,7 @@ export function UserRequestPage() {
                           >
                             <option value="">Select unit</option>
                             {units.map((unit) => (
-                              <option key={unit} value={unit}>
-                                {unit}
-                              </option>
+                              <option key={unit} value={unit}>{unit}</option>
                             ))}
                           </select>
                         </td>
@@ -434,7 +435,6 @@ export function UserRequestPage() {
                               type="button"
                               onClick={() => handleRemoveItem(item.id)}
                               className="text-gray-400 hover:text-red-600 transition-colors p-1"
-                              title="Delete item"
                             >
                               <Trash2 className="w-5 h-5" />
                             </button>
@@ -446,13 +446,11 @@ export function UserRequestPage() {
                 </table>
               </div>
 
-              {/* Add Item Button */}
               <div className="flex justify-center pt-2">
                 <button
                   type="button"
                   onClick={handleAddItem}
                   className="bg-black text-white w-12 h-12 rounded-full flex items-center justify-center hover:bg-gray-800 transition-colors shadow-lg"
-                  title="Add item"
                 >
                   <Plus className="w-6 h-6" />
                 </button>
@@ -462,7 +460,8 @@ export function UserRequestPage() {
                 <button
                   type="button"
                   onClick={handlePrevStep}
-                  className="border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:border-gray-400 transition-colors flex items-center gap-2"
+                  disabled={submitting}
+                  className="border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:border-gray-400 transition-colors flex items-center gap-2 disabled:opacity-50"
                 >
                   <ChevronLeft className="w-5 h-5" />
                   Back
@@ -470,29 +469,28 @@ export function UserRequestPage() {
                 <button
                   type="button"
                   onClick={handleNextStep}
-                  className="bg-[#4A89B0] text-white px-6 py-3 rounded-lg hover:bg-[#3776A0] transition-colors flex items-center gap-2"
+                  disabled={submitting}
+                  className="bg-[#4A89B0] text-white px-6 py-3 rounded-lg hover:bg-[#3776A0] transition-colors flex items-center gap-2 disabled:opacity-50"
                 >
                   <Send className="w-5 h-5" />
-                  Submit Request
+                  {submitting ? "Submitting..." : "Submit Request"}
                 </button>
               </div>
             </div>
           )}
 
-          {/* Step 3: Success Confirmation */}
+          {/* Step 3: Success */}
           {currentStep === 3 && (
             <div className="text-center space-y-6 py-12">
               <div className="inline-flex items-center justify-center w-24 h-24 bg-green-100 rounded-full">
                 <Check className="w-12 h-12 text-green-600" />
               </div>
-              
               <div>
                 <h2 className="text-3xl font-bold text-gray-900 mb-2">Request Sent Successfully!</h2>
                 <p className="text-lg text-gray-600">
-                  Your inventory request has been submitted and is now pending review.
+                  Your inventory request has been submitted and is now pending admin review.
                 </p>
               </div>
-
               <div className="pt-6">
                 <button
                   type="button"
@@ -504,6 +502,7 @@ export function UserRequestPage() {
               </div>
             </div>
           )}
+
         </div>
       </div>
     </div>

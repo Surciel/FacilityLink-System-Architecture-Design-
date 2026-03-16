@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { 
   Search, 
   Filter, 
@@ -15,68 +15,143 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
+import { supabase } from "../../supabaseClient";
 
 interface Request {
   id: string;
-  requester: string;
-  email: string;
+  requested_by: string;
   department: string;
-  items: { name: string; quantity: number; category: string }[];
-  date: string;
-  status: "pending" | "approved" | "rejected" | "completed";
-  priority: "low" | "medium" | "high";
-  read: boolean;
+  item_no: string;
+  description: string;
+  unit: string;
+  quantity_requested: number;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
 }
-
-// ============================================================================
-// DATABASE INTEGRATION: PostgreSQL - User Requests
-// ============================================================================
-// TODO: Replace this empty array with actual database query
-//
-// SUGGESTED TABLE SCHEMA:
-// Table: requests
-// - id (VARCHAR/UUID PRIMARY KEY)
-// - requester_name (VARCHAR)
-// - email (VARCHAR)
-// - department (VARCHAR)
-// - date (TIMESTAMP)
-// - status (VARCHAR: 'pending', 'approved', 'rejected', 'completed')
-// - priority (VARCHAR: 'low', 'medium', 'high')
-// - read (BOOLEAN)
-// - created_at (TIMESTAMP)
-//
-// Table: request_items (related table)
-// - id (SERIAL PRIMARY KEY)
-// - request_id (VARCHAR/UUID FOREIGN KEY REFERENCES requests(id))
-// - item_name (VARCHAR)
-// - quantity (INTEGER)
-// - category (VARCHAR)
-//
-// EXAMPLE QUERY:
-// const mockRequests = await db.query(`
-//   SELECT r.*, 
-//          json_agg(json_build_object(
-//            'name', ri.item_name, 
-//            'quantity', ri.quantity, 
-//            'category', ri.category
-//          )) as items
-//   FROM requests r
-//   LEFT JOIN request_items ri ON r.id = ri.request_id
-//   GROUP BY r.id
-//   ORDER BY r.created_at DESC
-// `);
-// ============================================================================
-
-const mockRequests: Request[] = [];
 
 export function InboxPage() {
   const navigate = useNavigate();
-  const [requests, setRequests] = useState<Request[]>(mockRequests);
+  const [requests, setRequests] = useState<Request[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const fetchRequests = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("requests")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      toast.error("Failed to load requests");
+      console.error(error);
+    } else {
+      setRequests(data || []);
+    }
+    setLoading(false);
+  };
+
+  const handleApprove = async (request: Request) => {
+    setActionLoading(true);
+
+    // 1. Check current stock
+    const { data: inventoryItem, error: fetchError } = await supabase
+      .from("inventory")
+      .select("remaining_stock")
+      .eq("item_no", request.item_no)
+      .single();
+
+    if (fetchError || !inventoryItem) {
+      toast.error("Could not fetch inventory item");
+      setActionLoading(false);
+      return;
+    }
+
+    // 2. Check if enough stock
+    if (request.quantity_requested > inventoryItem.remaining_stock) {
+      toast.error(`Not enough stock! Only ${inventoryItem.remaining_stock} ${request.unit}(s) available.`);
+      setActionLoading(false);
+      return;
+    }
+
+    // 3. Update request status to approved
+    const { error: updateRequestError } = await supabase
+      .from("requests")
+      .update({ status: "approved" })
+      .eq("id", request.id);
+
+    if (updateRequestError) {
+      toast.error("Failed to approve request");
+      setActionLoading(false);
+      return;
+    }
+
+    // 4. Subtract stock from inventory
+    const { error: updateStockError } = await supabase
+      .from("inventory")
+      .update({ remaining_stock: inventoryItem.remaining_stock - request.quantity_requested })
+      .eq("item_no", request.item_no);
+
+    if (updateStockError) {
+      toast.error("Request approved but stock update failed!");
+      setActionLoading(false);
+      return;
+    }
+
+    toast.success("Request approved and stock updated!");
+    setSelectedRequest({ ...request, status: "approved" });
+    fetchRequests();
+    setActionLoading(false);
+  };
+
+  const handleReject = async (request: Request) => {
+    setActionLoading(true);
+
+    const { error } = await supabase
+      .from("requests")
+      .update({ status: "rejected" })
+      .eq("id", request.id);
+
+    if (error) {
+      toast.error("Failed to reject request");
+      setActionLoading(false);
+      return;
+    }
+
+    toast.success("Request rejected");
+    setSelectedRequest({ ...request, status: "rejected" });
+    fetchRequests();
+    setActionLoading(false);
+  };
+
+  const filteredRequests = requests.filter(request => {
+    const matchesSearch =
+      (request.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+      (request.id?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+      (request.department?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+      (request.description?.toLowerCase() || "").includes(searchQuery.toLowerCase());
+
+    const matchesStatus = statusFilter === "all" || request.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "pending": return "bg-orange-100 text-orange-700 border-orange-200";
+      case "approved": return "bg-green-100 text-green-700 border-green-200";
+      case "rejected": return "bg-red-100 text-red-700 border-red-200";
+      default: return "bg-gray-100 text-gray-700 border-gray-200";
+    }
+  };
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -85,71 +160,7 @@ export function InboxPage() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => {
-    navigate("/admin/login");
-  };
-
-  // Get unique categories
-  const categories = Array.from(
-    new Set(requests.flatMap(r => r.items.map(item => item.category)))
-  );
-
-  // Filter requests
-  const filteredRequests = requests.filter(request => {
-    const matchesSearch = 
-      request.requester.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      request.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      request.department.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      request.items.some(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
-
-    const matchesStatus = statusFilter === "all" || request.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
-
-  const handleApprove = (requestId: string) => {
-    setRequests(requests.map(r => 
-      r.id === requestId ? { ...r, status: "approved" as const } : r
-    ));
-    toast.success("Request approved successfully");
-  };
-
-  const handleReject = (requestId: string) => {
-    setRequests(requests.map(r => 
-      r.id === requestId ? { ...r, status: "rejected" as const } : r
-    ));
-    toast.error("Request rejected");
-  };
-
-  const handleMarkAsRead = (requestId: string) => {
-    setRequests(requests.map(r => 
-      r.id === requestId ? { ...r, read: true } : r
-    ));
-  };
-
-  const handleRequestClick = (request: Request) => {
-    setSelectedRequest(request);
-    handleMarkAsRead(request.id);
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "pending": return "bg-orange-100 text-orange-700 border-orange-200";
-      case "approved": return "bg-green-100 text-green-700 border-green-200";
-      case "rejected": return "bg-red-100 text-red-700 border-red-200";
-      case "completed": return "bg-blue-100 text-blue-700 border-blue-200";
-      default: return "bg-gray-100 text-gray-700 border-gray-200";
-    }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case "high": return "bg-red-100 text-red-700";
-      case "medium": return "bg-yellow-100 text-yellow-700";
-      case "low": return "bg-green-100 text-green-700";
-      default: return "bg-gray-100 text-gray-700";
-    }
-  };
+  const handleLogout = () => navigate("/admin/login");
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -165,7 +176,6 @@ export function InboxPage() {
               <p className="text-xs text-gray-500">Admin Portal</p>
             </div>
           </div>
-
           <button
             onClick={handleLogout}
             className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -188,19 +198,12 @@ export function InboxPage() {
           {menuItems.map((item) => {
             const Icon = item.icon;
             const active = item.path === "/admin/inbox";
-            
             return (
               <button
                 key={item.path}
-                onClick={() => {
-                  setIsSidebarPinned(true);
-                  setIsSidebarExpanded(true);
-                  navigate(item.path);
-                }}
+                onClick={() => { setIsSidebarPinned(true); setIsSidebarExpanded(true); navigate(item.path); }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                  active
-                    ? "bg-[#4A89B0] text-white shadow-md"
-                    : "text-gray-700 hover:bg-gray-100"
+                  active ? "bg-[#4A89B0] text-white shadow-md" : "text-gray-700 hover:bg-gray-100"
                 }`}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
@@ -221,6 +224,7 @@ export function InboxPage() {
       }`}>
         <div className="p-4 lg:p-8">
           <div className="space-y-6">
+
             {/* Header */}
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Inbox</h1>
@@ -230,7 +234,6 @@ export function InboxPage() {
             {/* Filters */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                {/* Search */}
                 <div className="lg:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
                   <div className="relative">
@@ -244,8 +247,6 @@ export function InboxPage() {
                     />
                   </div>
                 </div>
-
-                {/* Status Filter */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
                   <select
@@ -257,91 +258,72 @@ export function InboxPage() {
                     <option value="pending">Pending</option>
                     <option value="approved">Approved</option>
                     <option value="rejected">Rejected</option>
-                    <option value="completed">Completed</option>
                   </select>
                 </div>
               </div>
-
               <div className="mt-4 flex items-center gap-4 text-sm text-gray-600">
                 <div className="flex items-center gap-2">
                   <Filter className="w-4 h-4" />
                   <span>Showing {filteredRequests.length} of {requests.length} requests</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full" />
-                  <span>{requests.filter(r => !r.read).length} unread</span>
+                  <div className="w-2 h-2 bg-orange-500 rounded-full" />
+                  <span>{requests.filter(r => r.status === "pending").length} pending</span>
                 </div>
               </div>
             </div>
 
-            {/* Request List */}
+            {/* Request List + Detail */}
             <div className="grid lg:grid-cols-3 gap-6">
-              {/* List View */}
+
+              {/* List */}
               <div className="lg:col-span-2 space-y-3">
-                {filteredRequests.map((request) => (
-                  <div
-                    key={request.id}
-                    onClick={() => handleRequestClick(request)}
-                    className={`bg-white rounded-lg shadow-sm border cursor-pointer transition-all hover:shadow-md ${
-                      !request.read 
-                        ? "border-blue-300 bg-blue-50/30" 
-                        : "border-gray-200"
-                    } ${selectedRequest?.id === request.id ? "ring-2 ring-[#4A89B0]" : ""}`}
-                  >
-                    <div className="p-5">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-start gap-3">
-                          {!request.read && (
-                            <div className="w-2 h-2 bg-blue-600 rounded-full mt-2" />
-                          )}
+                {loading ? (
+                  <div className="bg-white rounded-lg p-12 text-center text-gray-400">
+                    Loading requests...
+                  </div>
+                ) : filteredRequests.length === 0 ? (
+                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+                    <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-600">No requests found</p>
+                  </div>
+                ) : (
+                  filteredRequests.map((request) => (
+                    <div
+                      key={request.id}
+                      onClick={() => setSelectedRequest(request)}
+                      className={`bg-white rounded-lg shadow-sm border cursor-pointer transition-all hover:shadow-md ${
+                        request.status === "pending" ? "border-orange-200 bg-orange-50/20" : "border-gray-200"
+                      } ${selectedRequest?.id === request.id ? "ring-2 ring-[#4A89B0]" : ""}`}
+                    >
+                      <div className="p-5">
+                        <div className="flex items-start justify-between mb-3">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-semibold text-gray-900">{request.requester}</h3>
+                              <h3 className="font-semibold text-gray-900">{request.requested_by}</h3>
                               <span className="text-xs text-gray-500">({request.department})</span>
                             </div>
-                            <div className="text-sm text-gray-600 mb-2">
-                              <span className="font-mono">{request.id}</span> · {request.email}
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
                               <Calendar className="w-3 h-3" />
-                              {request.date}
+                              {new Date(request.created_at).toLocaleDateString()}
                             </div>
                           </div>
-                        </div>
-                        
-                        <div className="flex flex-col items-end gap-2">
                           <span className={`text-xs px-2 py-1 rounded border ${getStatusColor(request.status)}`}>
                             {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
                           </span>
-                          <span className={`text-xs px-2 py-1 rounded ${getPriorityColor(request.priority)}`}>
-                            {request.priority.charAt(0).toUpperCase() + request.priority.slice(1)}
-                          </span>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <div className="text-sm font-medium text-gray-700 mb-1">Requested Item:</div>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-700">{request.description}</span>
+                            <span className="bg-white px-2 py-0.5 rounded text-gray-900 font-medium border">
+                              × {request.quantity_requested} {request.unit}
+                            </span>
+                          </div>
                         </div>
                       </div>
-
-                      <div className="bg-gray-50 rounded-lg p-3 space-y-1">
-                        <div className="text-sm font-medium text-gray-700 mb-2">Requested Items:</div>
-                        {request.items.map((item, idx) => (
-                          <div key={idx} className="flex items-center justify-between text-sm">
-                            <span className="text-gray-700">{item.name}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-gray-500">{item.category}</span>
-                              <span className="bg-white px-2 py-0.5 rounded text-gray-900 font-medium">
-                                × {item.quantity}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
                     </div>
-                  </div>
-                ))}
-
-                {filteredRequests.length === 0 && (
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                    <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-600">No requests found matching your filters</p>
-                  </div>
+                  ))
                 )}
               </div>
 
@@ -350,33 +332,35 @@ export function InboxPage() {
                 {selectedRequest ? (
                   <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 sticky top-24">
                     <h3 className="text-xl font-bold text-gray-900 mb-4">Request Details</h3>
-                    
                     <div className="space-y-4">
                       <div>
                         <label className="text-xs font-medium text-gray-500">Request ID</label>
                         <div className="font-mono text-sm mt-1">{selectedRequest.id}</div>
                       </div>
-
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Requester</label>
-                        <div className="text-sm mt-1">{selectedRequest.requester}</div>
+                        <label className="text-xs font-medium text-gray-500">Requested By</label>
+                        <div className="text-sm mt-1">{selectedRequest.requested_by}</div>
                       </div>
-
                       <div>
                         <label className="text-xs font-medium text-gray-500">Department</label>
                         <div className="text-sm mt-1">{selectedRequest.department}</div>
                       </div>
-
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Email</label>
-                        <div className="text-sm mt-1">{selectedRequest.email}</div>
+                        <label className="text-xs font-medium text-gray-500">Item</label>
+                        <div className="text-sm mt-1">{selectedRequest.description}</div>
                       </div>
-
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Date & Time</label>
-                        <div className="text-sm mt-1">{selectedRequest.date}</div>
+                        <label className="text-xs font-medium text-gray-500">Item No.</label>
+                        <div className="text-sm font-mono mt-1">{selectedRequest.item_no}</div>
                       </div>
-
+                      <div>
+                        <label className="text-xs font-medium text-gray-500">Quantity Requested</label>
+                        <div className="text-sm mt-1">{selectedRequest.quantity_requested} {selectedRequest.unit}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-gray-500">Date Submitted</label>
+                        <div className="text-sm mt-1">{new Date(selectedRequest.created_at).toLocaleString()}</div>
+                      </div>
                       <div>
                         <label className="text-xs font-medium text-gray-500">Status</label>
                         <div className="mt-1">
@@ -385,32 +369,25 @@ export function InboxPage() {
                           </span>
                         </div>
                       </div>
-
-                      <div>
-                        <label className="text-xs font-medium text-gray-500">Priority</label>
-                        <div className="mt-1">
-                          <span className={`text-xs px-2 py-1 rounded inline-block ${getPriorityColor(selectedRequest.priority)}`}>
-                            {selectedRequest.priority.charAt(0).toUpperCase() + selectedRequest.priority.slice(1)}
-                          </span>
-                        </div>
-                      </div>
                     </div>
 
                     {selectedRequest.status === "pending" && (
                       <div className="mt-6 pt-6 border-t border-gray-200 space-y-3">
                         <button
-                          onClick={() => handleApprove(selectedRequest.id)}
-                          className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                          onClick={() => handleApprove(selectedRequest)}
+                          disabled={actionLoading}
+                          className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           <CheckCircle2 className="w-5 h-5" />
-                          Approve Request
+                          {actionLoading ? "Processing..." : "Approve Request"}
                         </button>
                         <button
-                          onClick={() => handleReject(selectedRequest.id)}
-                          className="w-full bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                          onClick={() => handleReject(selectedRequest)}
+                          disabled={actionLoading}
+                          className="w-full bg-red-600 text-white py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                         >
                           <XCircle className="w-5 h-5" />
-                          Reject Request
+                          {actionLoading ? "Processing..." : "Reject Request"}
                         </button>
                       </div>
                     )}
