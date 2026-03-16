@@ -103,9 +103,10 @@ const departmentActivity: any[] = [];
 
 export function AnalyticsPage() {
   const navigate = useNavigate();
-  const [reportType, setReportType] = useState("weekly");
-  const [selectedMonth, setSelectedMonth] = useState("March");
+  const [reportType, setReportType] = useState<string>("monthly");
+  const [dateRange, setDateRange] = useState({ start: "", end: "" });
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
+  const [isSidebarPinned, setIsSidebarPinned] = useState(false);
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -151,10 +152,10 @@ export function AnalyticsPage() {
 
       {/* Sidebar */}
       <aside
-        onMouseEnter={() => setIsSidebarExpanded(true)}
-        onMouseLeave={() => setIsSidebarExpanded(false)}
+        onMouseEnter={() => !isSidebarPinned && setIsSidebarExpanded(true)}
+        onMouseLeave={() => !isSidebarPinned && setIsSidebarExpanded(false)}
         className={`fixed top-16 left-0 bottom-0 bg-white shadow-lg transition-all duration-300 z-20 ${
-          isSidebarExpanded ? "w-64" : "w-20"
+          isSidebarExpanded || isSidebarPinned ? "w-64" : "w-20"
         }`}
       >
         <nav className="p-4 space-y-2">
@@ -165,7 +166,11 @@ export function AnalyticsPage() {
             return (
               <button
                 key={item.path}
-                onClick={() => navigate(item.path)}
+                onClick={() => {
+                  setIsSidebarPinned(true);
+                  setIsSidebarExpanded(true);
+                  navigate(item.path);
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                   active
                     ? "bg-[#4A89B0] text-white shadow-md"
@@ -174,7 +179,7 @@ export function AnalyticsPage() {
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
                 <span className={`font-medium whitespace-nowrap transition-opacity duration-300 ${
-                  isSidebarExpanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
+                  isSidebarExpanded || isSidebarPinned ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
                 }`}>
                   {item.label}
                 </span>
@@ -186,7 +191,7 @@ export function AnalyticsPage() {
 
       {/* Main Content */}
       <main className={`pt-16 transition-all duration-300 ${
-        isSidebarExpanded ? "pl-64" : "pl-20"
+        isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"
       }`}>
         <div className="p-4 lg:p-8">
           <div className="space-y-6">

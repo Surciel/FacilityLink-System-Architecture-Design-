@@ -72,12 +72,11 @@ const mockRequests: Request[] = [];
 export function InboxPage() {
   const navigate = useNavigate();
   const [requests, setRequests] = useState<Request[]>(mockRequests);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [priorityFilter, setPriorityFilter] = useState<string>("all");
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
+  const [isSidebarPinned, setIsSidebarPinned] = useState(false);
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -104,11 +103,8 @@ export function InboxPage() {
       request.items.some(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesStatus = statusFilter === "all" || request.status === statusFilter;
-    const matchesPriority = priorityFilter === "all" || request.priority === priorityFilter;
-    const matchesCategory = categoryFilter === "all" || 
-      request.items.some(item => item.category === categoryFilter);
 
-    return matchesSearch && matchesStatus && matchesPriority && matchesCategory;
+    return matchesSearch && matchesStatus;
   });
 
   const handleApprove = (requestId: string) => {
@@ -182,10 +178,10 @@ export function InboxPage() {
 
       {/* Sidebar */}
       <aside
-        onMouseEnter={() => setIsSidebarExpanded(true)}
-        onMouseLeave={() => setIsSidebarExpanded(false)}
+        onMouseEnter={() => !isSidebarPinned && setIsSidebarExpanded(true)}
+        onMouseLeave={() => !isSidebarPinned && setIsSidebarExpanded(false)}
         className={`fixed top-16 left-0 bottom-0 bg-white shadow-lg transition-all duration-300 z-20 ${
-          isSidebarExpanded ? "w-64" : "w-20"
+          isSidebarExpanded || isSidebarPinned ? "w-64" : "w-20"
         }`}
       >
         <nav className="p-4 space-y-2">
@@ -196,7 +192,11 @@ export function InboxPage() {
             return (
               <button
                 key={item.path}
-                onClick={() => navigate(item.path)}
+                onClick={() => {
+                  setIsSidebarPinned(true);
+                  setIsSidebarExpanded(true);
+                  navigate(item.path);
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                   active
                     ? "bg-[#4A89B0] text-white shadow-md"
@@ -205,7 +205,7 @@ export function InboxPage() {
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
                 <span className={`font-medium whitespace-nowrap transition-opacity duration-300 ${
-                  isSidebarExpanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
+                  isSidebarExpanded || isSidebarPinned ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
                 }`}>
                   {item.label}
                 </span>
@@ -217,7 +217,7 @@ export function InboxPage() {
 
       {/* Main Content */}
       <main className={`pt-16 transition-all duration-300 ${
-        isSidebarExpanded ? "pl-64" : "pl-20"
+        isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"
       }`}>
         <div className="p-4 lg:p-8">
           <div className="space-y-6">
@@ -258,36 +258,6 @@ export function InboxPage() {
                     <option value="approved">Approved</option>
                     <option value="rejected">Rejected</option>
                     <option value="completed">Completed</option>
-                  </select>
-                </div>
-
-                {/* Priority Filter */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
-                  <select
-                    value={priorityFilter}
-                    onChange={(e) => setPriorityFilter(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                  >
-                    <option value="all">All Priorities</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
-                </div>
-
-                {/* Category Filter */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                  >
-                    <option value="all">All Categories</option>
-                    {categories.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
                   </select>
                 </div>
               </div>
