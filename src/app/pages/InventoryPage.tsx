@@ -12,22 +12,21 @@ import {
   LayoutDashboard,
   Inbox,
   BarChart3,
-  LogOut
+  LogOut,
+  Edit,
+  Trash2,
+  Save
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 
 // Inventory management page component
 interface InventoryItem {
-  id: string;
-  name: string;
-  category: string;
-  currentStock: number;
-  minimumStock: number;
-  unit: string;
-  lastRestocked: string;
-  nextResupply: string;
-  pricePerUnit: number;
+  item_no: string;           // Item ID (Primary Key)
+  description: string;       // Item name/description
+  unit: string;              // Unit of measurement
+  remaining_stock: number;   // Current/remaining stock
+  minimum_stock?: number;    // Optional: for low stock alerts
 }
 
 // ============================================================================
@@ -35,40 +34,30 @@ interface InventoryItem {
 // ============================================================================
 // TODO: Replace this empty array with actual database query
 //
-// SUGGESTED TABLE SCHEMA:
+// SUGGESTED TABLE SCHEMA (matches your database):
 // Table: inventory
-// - id (VARCHAR/UUID PRIMARY KEY)
-// - name (VARCHAR)
-// - category (VARCHAR)
-// - current_stock (INTEGER)
-// - minimum_stock (INTEGER)
-// - unit (VARCHAR) -- e.g., 'pcs', 'reams', 'bottles'
-// - last_restocked (DATE)
-// - next_resupply (DATE)
-// - price_per_unit (DECIMAL/NUMERIC)
-// - created_at (TIMESTAMP)
-// - updated_at (TIMESTAMP)
+// - item_no (VARCHAR PRIMARY KEY)          -- Item ID
+// - description (TEXT)                     -- Item name/description
+// - unit (VARCHAR)                         -- Unit of measurement (e.g., 'pcs', 'boxes', 'reams')
+// - remaining_stock (INTEGER)              -- Current/remaining stock quantity
+// - minimum_stock (INTEGER, optional)      -- Minimum stock level for alerts
+// - created_at (TIMESTAMP, optional)
+// - updated_at (TIMESTAMP, optional)
 //
 // EXAMPLE QUERY:
 // const mockInventory = await db.query(`
-//   SELECT id, name, category, current_stock as "currentStock", 
-//          minimum_stock as "minimumStock", unit, 
-//          last_restocked as "lastRestocked", 
-//          next_resupply as "nextResupply", 
-//          price_per_unit as "pricePerUnit"
+//   SELECT item_no, description, unit, remaining_stock, minimum_stock
 //   FROM inventory
-//   ORDER BY name ASC
+//   ORDER BY description ASC
 // `);
 //
-// RESTOCK UPDATE QUERY:
+// UPDATE STOCK QUERY:
 // await db.query(`
 //   UPDATE inventory 
-//   SET current_stock = current_stock + $1, 
-//       last_restocked = CURRENT_DATE,
-//       next_resupply = $2,
+//   SET remaining_stock = $1,
 //       updated_at = CURRENT_TIMESTAMP
-//   WHERE id = $3
-// `, [restockAmount, nextResupplyDate, itemId]);
+//   WHERE item_no = $2
+// `, [newStock, itemNo]);
 // ============================================================================
 
 const mockInventory: InventoryItem[] = [];
@@ -84,6 +73,17 @@ export function InventoryPage() {
   const [restockAmount, setRestockAmount] = useState("");
   const [resupplyDate, setResupplyDate] = useState("");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
+  
+  // New state for Update Inventory modal
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateMode, setUpdateMode] = useState<'add' | 'edit' | 'remove'>('add');
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [newItem, setNewItem] = useState({
+    description: '',
+    unit: '',
+    remaining_stock: 0,
+    minimum_stock: 0
+  });
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -96,19 +96,19 @@ export function InventoryPage() {
     navigate("/admin/login");
   };
 
-  const categories = Array.from(new Set(inventory.map(item => item.category)));
+  const categories = Array.from(new Set(inventory.map(item => item.unit)));
 
   const filteredInventory = inventory.filter(item => {
     const matchesSearch = 
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.id.toLowerCase().includes(searchQuery.toLowerCase());
+      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.item_no.toLowerCase().includes(searchQuery.toLowerCase());
     
-    const matchesCategory = categoryFilter === "all" || item.category === categoryFilter;
+    const matchesCategory = categoryFilter === "all" || item.unit === categoryFilter;
     
     const matchesStock = 
       stockFilter === "all" ||
-      (stockFilter === "low" && item.currentStock < item.minimumStock) ||
-      (stockFilter === "adequate" && item.currentStock >= item.minimumStock);
+      (stockFilter === "low" && item.remaining_stock < item.minimum_stock) ||
+      (stockFilter === "adequate" && item.remaining_stock >= item.minimum_stock);
 
     return matchesSearch && matchesCategory && matchesStock;
   });
@@ -126,17 +126,17 @@ export function InventoryPage() {
     }
 
     setInventory(inventory.map(item =>
-      item.id === selectedItem.id
+      item.item_no === selectedItem.item_no
         ? { 
             ...item, 
-            currentStock: item.currentStock + amount,
+            remaining_stock: item.remaining_stock + amount,
             lastRestocked: new Date().toISOString().split('T')[0],
             nextResupply: resupplyDate || item.nextResupply
           }
         : item
     ));
 
-    toast.success(`Successfully restocked ${amount} ${selectedItem.unit} of ${selectedItem.name}`);
+    toast.success(`Successfully restocked ${amount} ${selectedItem.unit} of ${selectedItem.description}`);
     setShowRestockModal(false);
     setSelectedItem(null);
     setRestockAmount("");
@@ -151,15 +151,92 @@ export function InventoryPage() {
   };
 
   const getStockStatus = (item: InventoryItem) => {
-    const percentage = (item.currentStock / item.minimumStock) * 100;
+    if (!item.minimum_stock) return { label: "Unknown", color: "text-gray-600 bg-gray-50", icon: Package };
+    const percentage = (item.remaining_stock / item.minimum_stock) * 100;
     if (percentage < 30) return { label: "Critical", color: "text-red-600 bg-red-50", icon: AlertTriangle };
     if (percentage < 60) return { label: "Low", color: "text-orange-600 bg-orange-50", icon: TrendingDown };
     return { label: "Adequate", color: "text-green-600 bg-green-50", icon: TrendingUp };
   };
 
-  const totalItems = inventory.reduce((sum, item) => sum + item.currentStock, 0);
-  const lowStockCount = inventory.filter(item => item.currentStock < item.minimumStock).length;
-  const totalValue = inventory.reduce((sum, item) => sum + (item.currentStock * item.pricePerUnit), 0);
+  const totalItems = inventory.reduce((sum, item) => sum + item.remaining_stock, 0);
+  const lowStockCount = inventory.filter(item => item.minimum_stock && item.remaining_stock < item.minimum_stock).length;
+  const totalValue = inventory.reduce((sum, item) => sum + (item.remaining_stock * item.pricePerUnit), 0);
+
+  // New handlers for Update Inventory modal
+  const handleAddItem = () => {
+    if (!newItem.description || !newItem.unit) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+
+    const item: InventoryItem = {
+      item_no: `ITEM-${Date.now()}`,
+      description: newItem.description,
+      unit: newItem.unit,
+      remaining_stock: newItem.remaining_stock,
+      minimum_stock: newItem.minimum_stock,
+      lastRestocked: new Date().toISOString().split('T')[0],
+      nextResupply: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    };
+
+    setInventory([...inventory, item]);
+    toast.success(`Successfully added ${item.description} to inventory`);
+    setNewItem({
+      description: '',
+      unit: '',
+      remaining_stock: 0,
+      minimum_stock: 0
+    });
+    setShowUpdateModal(false);
+  };
+
+  const handleEditItem = () => {
+    if (!editingItem) return;
+
+    setInventory(inventory.map(item =>
+      item.item_no === editingItem.item_no ? editingItem : item
+    ));
+    toast.success(`Successfully updated ${editingItem.description}`);
+    setEditingItem(null);
+    setShowUpdateModal(false);
+  };
+
+  const handleRemoveItem = (itemId: string) => {
+    const item = inventory.find(i => i.item_no === itemId);
+    if (!item) return;
+
+    if (confirm(`Are you sure you want to remove "${item.description}" from inventory?`)) {
+      setInventory(inventory.filter(i => i.item_no !== itemId));
+      toast.success(`Successfully removed ${item.description} from inventory`);
+    }
+  };
+
+  const openUpdateModal = (mode: 'add' | 'edit' | 'remove') => {
+    setUpdateMode(mode);
+    setShowUpdateModal(true);
+    if (mode === 'add') {
+      setNewItem({
+        description: '',
+        unit: '',
+        remaining_stock: 0,
+        minimum_stock: 0
+      });
+    }
+  };
+
+  const handleAdjustQuantity = (itemId: string, adjustment: number) => {
+    setInventory(inventory.map(item => {
+      if (item.item_no === itemId) {
+        const newStock = Math.max(0, item.remaining_stock + adjustment);
+        return {
+          ...item,
+          remaining_stock: newStock,
+          lastRestocked: adjustment > 0 ? new Date().toISOString().split('T')[0] : item.lastRestocked
+        };
+      }
+      return item;
+    }));
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -228,17 +305,26 @@ export function InventoryPage() {
         <div className="p-4 lg:p-8">
           <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Inventory Management</h1>
-        <p className="text-gray-600 mt-1">Track and manage your stock levels</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Inventory Management</h1>
+          <p className="text-gray-600 mt-1">Track and manage your stock levels</p>
+        </div>
+        <button
+          onClick={() => openUpdateModal('add')}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors shadow-md"
+        >
+          <Edit className="w-5 h-5" />
+          Update Inventory
+        </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Total Items</p>
+              <p className="text-sm text-gray-600">Total Items in Stock</p>
               <p className="text-2xl font-bold text-gray-900 mt-1">{totalItems}</p>
             </div>
             <div className="bg-blue-100 p-3 rounded-lg">
@@ -255,18 +341,6 @@ export function InventoryPage() {
             </div>
             <div className="bg-red-100 p-3 rounded-lg">
               <AlertTriangle className="w-6 h-6 text-red-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Total Value</p>
-              <p className="text-2xl font-bold text-gray-900 mt-1">₱{totalValue.toLocaleString()}</p>
-            </div>
-            <div className="bg-green-100 p-3 rounded-lg">
-              <TrendingUp className="w-6 h-6 text-green-600" />
             </div>
           </div>
         </div>
@@ -351,25 +425,25 @@ export function InventoryPage() {
               {filteredInventory.map((item) => {
                 const status = getStockStatus(item);
                 const StatusIcon = status.icon;
-                const percentage = (item.currentStock / item.minimumStock) * 100;
+                const percentage = (item.remaining_stock / item.minimum_stock) * 100;
 
                 return (
-                  <tr key={item.id} className="hover:bg-gray-50">
+                  <tr key={item.item_no} className="hover:bg-gray-50">
                     <td className="px-6 py-4">
                       <div>
-                        <div className="font-semibold text-gray-900">{item.name}</div>
-                        <div className="text-xs text-gray-500 font-mono">{item.id}</div>
+                        <div className="font-semibold text-gray-900">{item.description}</div>
+                        <div className="text-xs text-gray-500 font-mono">{item.item_no}</div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-sm text-gray-700">{item.category}</span>
+                      <span className="text-sm text-gray-700">{item.unit}</span>
                     </td>
                     <td className="px-6 py-4">
                       <div>
                         <div className="text-sm font-semibold text-gray-900">
-                          {item.currentStock} {item.unit}
+                          {item.remaining_stock} {item.unit}
                         </div>
-                        <div className="text-xs text-gray-500">Min: {item.minimumStock}</div>
+                        <div className="text-xs text-gray-500">Min: {item.minimum_stock}</div>
                         <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
                           <div
                             className={`h-1.5 rounded-full ${
@@ -439,10 +513,10 @@ export function InventoryPage() {
             <div className="p-6 space-y-6">
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Item</div>
-                <div className="font-semibold text-gray-900">{selectedItem.name}</div>
+                <div className="font-semibold text-gray-900">{selectedItem.description}</div>
                 <div className="text-sm text-gray-600 mt-2">Current Stock</div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {selectedItem.currentStock} {selectedItem.unit}
+                  {selectedItem.remaining_stock} {selectedItem.unit}
                 </div>
               </div>
 
@@ -476,7 +550,7 @@ export function InventoryPage() {
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="text-sm text-blue-800">
                     New stock level will be: <span className="font-bold">
-                      {selectedItem.currentStock + parseInt(restockAmount)} {selectedItem.unit}
+                      {selectedItem.remaining_stock + parseInt(restockAmount)} {selectedItem.unit}
                     </span>
                   </div>
                 </div>
@@ -496,6 +570,340 @@ export function InventoryPage() {
               >
                 Confirm Restock
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Update Inventory Modal */}
+      {showUpdateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-bold text-gray-900">Update Inventory</h3>
+                <button
+                  onClick={() => setShowUpdateModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {/* Tab Navigation */}
+              <div className="border-b border-gray-200">
+                <div className="flex gap-0">
+                  <button
+                    onClick={() => setUpdateMode('add')}
+                    className={`flex-1 px-6 py-4 font-medium transition-colors ${
+                      updateMode === 'add'
+                        ? 'border-b-2 border-[#4A89B0] text-[#4A89B0] bg-blue-50'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-2">
+                      <Plus className="w-5 h-5" />
+                      Add New Item
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setUpdateMode('edit')}
+                    className={`flex-1 px-6 py-4 font-medium transition-colors ${
+                      updateMode === 'edit'
+                        ? 'border-b-2 border-[#4A89B0] text-[#4A89B0] bg-blue-50'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-2">
+                      <Edit className="w-5 h-5" />
+                      Edit/Adjust Items
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => setUpdateMode('remove')}
+                    className={`flex-1 px-6 py-4 font-medium transition-colors ${
+                      updateMode === 'remove'
+                        ? 'border-b-2 border-red-500 text-red-600 bg-red-50'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-2">
+                      <Trash2 className="w-5 h-5" />
+                      Remove Items
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Add New Item Tab */}
+              {updateMode === 'add' && (
+                <div className="p-6 space-y-6">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-800">
+                      Add a new item to your inventory database. Fill in all required fields marked with *.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Item Name *
+                      </label>
+                      <input
+                        type="text"
+                        value={newItem.description}
+                        onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
+                        placeholder="e.g., Whiteboard Marker"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Category *
+                      </label>
+                      <input
+                        type="text"
+                        value={newItem.unit}
+                        onChange={(e) => setNewItem({ ...newItem, unit: e.target.value })}
+                        placeholder="e.g., Office Supplies"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Initial Stock Quantity *
+                      </label>
+                      <input
+                        type="number"
+                        value={newItem.remaining_stock}
+                        onChange={(e) => setNewItem({ ...newItem, remaining_stock: parseInt(e.target.value) || 0 })}
+                        placeholder="0"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                        min="0"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Minimum Stock Level *
+                      </label>
+                      <input
+                        type="number"
+                        value={newItem.minimum_stock}
+                        onChange={(e) => setNewItem({ ...newItem, minimum_stock: parseInt(e.target.value) || 0 })}
+                        placeholder="0"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                        min="0"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-4">
+                    <button
+                      onClick={() => setShowUpdateModal(false)}
+                      className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddItem}
+                      className="px-6 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors flex items-center gap-2"
+                    >
+                      <Plus className="w-5 h-5" />
+                      Add Item to Inventory
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Edit/Adjust Items Tab */}
+              {updateMode === 'edit' && (
+                <div className="p-6 space-y-6">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-800">
+                      Select an item to edit its details or adjust its quantity. Changes are saved immediately.
+                    </p>
+                  </div>
+
+                  {inventory.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-600">No items in inventory yet</p>
+                      <button
+                        onClick={() => setUpdateMode('add')}
+                        className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0]"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add Your First Item
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {inventory.map((item) => (
+                        <div key={item.item_no} className="border border-gray-200 rounded-lg p-4 hover:border-[#4A89B0] transition-colors">
+                          {editingItem?.item_no === item.item_no ? (
+                            <div className="space-y-4">
+                              <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
+                                  <input
+                                    type="text"
+                                    value={editingItem.description}
+                                    onChange={(e) => setEditingItem({ ...editingItem, description: e.target.value })}
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Category</label>
+                                  <input
+                                    type="text"
+                                    value={editingItem.unit}
+                                    onChange={(e) => setEditingItem({ ...editingItem, unit: e.target.value })}
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Current Stock</label>
+                                  <input
+                                    type="number"
+                                    value={editingItem.remaining_stock}
+                                    onChange={(e) => setEditingItem({ ...editingItem, remaining_stock: parseInt(e.target.value) || 0 })}
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                                    min="0"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-700 mb-1">Minimum Stock</label>
+                                  <input
+                                    type="number"
+                                    value={editingItem.minimum_stock}
+                                    onChange={(e) => setEditingItem({ ...editingItem, minimum_stock: parseInt(e.target.value) || 0 })}
+                                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                                    min="0"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={handleEditItem}
+                                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2"
+                                >
+                                  <Save className="w-4 h-4" />
+                                  Save Changes
+                                </button>
+                                <button
+                                  onClick={() => setEditingItem(null)}
+                                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="flex items-start justify-between mb-3">
+                                <div className="flex-1">
+                                  <h4 className="font-semibold text-gray-900">{item.description}</h4>
+                                  <p className="text-sm text-gray-600">{item.unit} • {item.item_no}</p>
+                                </div>
+                                <button
+                                  onClick={() => setEditingItem(item)}
+                                  className="px-3 py-1 bg-[#4A89B0] text-white text-sm rounded-lg hover:bg-[#3776A0] flex items-center gap-1"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                  Edit
+                                </button>
+                              </div>
+                              
+                              <div className="grid grid-cols-3 gap-4 mb-3">
+                                <div>
+                                  <p className="text-xs text-gray-500">Current Stock</p>
+                                  <p className="text-sm font-semibold text-gray-900">{item.remaining_stock} {item.unit}</p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500">Minimum Stock</p>
+                                  <p className="text-sm font-semibold text-gray-900">{item.minimum_stock} {item.unit}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm text-gray-600">Quick Adjust:</span>
+                                <button
+                                  onClick={() => handleAdjustQuantity(item.item_no, -10)}
+                                  className="px-3 py-1 bg-red-100 text-red-700 text-sm rounded hover:bg-red-200"
+                                >
+                                  -10
+                                </button>
+                                <button
+                                  onClick={() => handleAdjustQuantity(item.item_no, -1)}
+                                  className="px-3 py-1 bg-red-100 text-red-700 text-sm rounded hover:bg-red-200"
+                                >
+                                  -1
+                                </button>
+                                <button
+                                  onClick={() => handleAdjustQuantity(item.item_no, 1)}
+                                  className="px-3 py-1 bg-green-100 text-green-700 text-sm rounded hover:bg-green-200"
+                                >
+                                  +1
+                                </button>
+                                <button
+                                  onClick={() => handleAdjustQuantity(item.item_no, 10)}
+                                  className="px-3 py-1 bg-green-100 text-green-700 text-sm rounded hover:bg-green-200"
+                                >
+                                  +10
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Remove Items Tab */}
+              {updateMode === 'remove' && (
+                <div className="p-6 space-y-6">
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <p className="text-sm text-red-800">
+                      <strong>Warning:</strong> Removing items will permanently delete them from your inventory. This action cannot be undone.
+                    </p>
+                  </div>
+
+                  {inventory.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-600">No items in inventory to remove</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {inventory.map((item) => (
+                        <div key={item.item_no} className="border border-gray-200 rounded-lg p-4 hover:border-red-300 transition-colors">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-gray-900">{item.description}</h4>
+                              <p className="text-sm text-gray-600">{item.unit} • {item.remaining_stock} {item.unit} in stock</p>
+                              <p className="text-xs text-gray-500 font-mono mt-1">{item.item_no}</p>
+                            </div>
+                            <button
+                              onClick={() => handleRemoveItem(item.item_no)}
+                              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
