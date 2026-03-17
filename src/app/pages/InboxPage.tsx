@@ -18,7 +18,7 @@ import { useNavigate } from "react-router";
 import { supabase } from "../../supabaseClient";
 
 interface Request {
-  id: string;
+  pkid: string;
   requested_by: string;
   department: string;
   item_no: string;
@@ -87,7 +87,7 @@ export function InboxPage() {
     const { error: updateRequestError } = await supabase
       .from("requests")
       .update({ status: "approved" })
-      .eq("id", request.id);
+      .eq("pkid", request.pkid);
 
     if (updateRequestError) {
       toast.error("Failed to approve request");
@@ -119,7 +119,7 @@ export function InboxPage() {
     const { error } = await supabase
       .from("requests")
       .update({ status: "rejected" })
-      .eq("id", request.id);
+      .eq("pkid", request.pkid);
 
     if (error) {
       toast.error("Failed to reject request");
@@ -290,11 +290,11 @@ export function InboxPage() {
                 ) : (
                   filteredRequests.map((request) => (
                     <div
-                      key={request.id}
+                      key={request.pkid}
                       onClick={() => setSelectedRequest(request)}
                       className={`bg-white rounded-lg shadow-sm border cursor-pointer transition-all hover:shadow-md ${
                         request.status === "pending" ? "border-orange-200 bg-orange-50/20" : "border-gray-200"
-                      } ${selectedRequest?.id === request.id ? "ring-2 ring-[#4A89B0]" : ""}`}
+                      } ${selectedRequest?.pkid === request.pkid ? "ring-2 ring-[#4A89B0]" : ""}`}
                     >
                       <div className="p-5">
                         <div className="flex items-start justify-between mb-3">

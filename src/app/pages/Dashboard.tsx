@@ -270,7 +270,7 @@ export function Dashboard() {
                   ) : (
                     filteredRequests.slice(0, 5).map((request) => (
                       <div
-                        key={request.id}
+                        key={request.pkid}
                         className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
                           request.status === "pending" ? "bg-blue-50/50" : ""
                         }`}
@@ -291,7 +291,7 @@ export function Dashboard() {
                               </span>
                             </div>
                             <div className="text-sm text-gray-600 mb-1">
-                              Request ID: <span className="font-mono">{request.id.slice(0, 8)}...</span>
+                              <span className="font-mono">{request.pkid?.slice(0, 8) ?? "N/A"}...</span>
                             </div>
                             <div className="text-sm text-gray-700">
                               Item: {request.description} — Qty: {request.quantity_requested} {request.unit}
