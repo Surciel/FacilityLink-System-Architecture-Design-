@@ -1,5 +1,15 @@
-import { useState } from "react";
-import { PackageOpen, Send, User, Lock, ChevronRight, ChevronLeft, Check, Trash2, Plus } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import {
+  PackageOpen,
+  Send,
+  User,
+  Lock,
+  ChevronRight,
+  ChevronLeft,
+  Check,
+  Trash2,
+  Plus,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
 import { supabase } from "../../supabaseClient";
@@ -9,6 +19,9 @@ interface RequestItem {
   itemDescription: string;
   unitOfMeasure: string;
   quantity: number;
+  suggestions?: string[];
+  showSuggestions?: boolean;
+  suggestionsFor?: "id" | "description"; // Track which field has suggestions
 }
 
 interface PersonalInfo {
@@ -24,6 +37,16 @@ export function UserRequestPage() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
+  const debounceTimersRef = useRef<Record<string, NodeJS.Timeout>>({});
+
+  // Cleanup debounce timers on component unmount
+  useEffect(() => {
+    return () => {
+      Object.values(debounceTimersRef.current).forEach((timer) =>
+        clearTimeout(timer),
+      );
+    };
+  }, []);
 
   const [personalInfo, setPersonalInfo] = useState<PersonalInfo>({
     fullName: "",
@@ -35,29 +58,176 @@ export function UserRequestPage() {
   });
 
   const [items, setItems] = useState<RequestItem[]>([
-    { id: "1", itemDescription: "", unitOfMeasure: "", quantity: 1 },
+    {
+      id: "",
+      itemDescription: "",
+      unitOfMeasure: "",
+      quantity: 1,
+      suggestions: [],
+      showSuggestions: false,
+      suggestionsFor: undefined,
+    },
   ]);
 
-  const units = [
-    "Piece/s", "Box/es", "Ream/s", "Pack/s", "Set/s",
-    "Bottle/s", "Roll/s", "Sheet/s", "Dozen", "Kilogram", "Liter", "Meter",
-  ];
-
   const handleAddItem = () => {
-    const newId = (items.length + 1).toString();
-    setItems([...items, { id: newId, itemDescription: "", unitOfMeasure: "", quantity: 1 }]);
+    setItems([
+      ...items,
+      {
+        id: "",
+        itemDescription: "",
+        unitOfMeasure: "",
+        quantity: 1,
+        suggestions: [],
+        showSuggestions: false,
+        suggestionsFor: undefined,
+      },
+    ]);
   };
 
-  const handleRemoveItem = (id: string) => {
+  const handleRemoveItem = (index: number) => {
     if (items.length > 1) {
-      setItems(items.filter((item) => item.id !== id));
+      setItems(items.filter((_, idx) => idx !== index));
     }
   };
 
-  const handleItemChange = (id: string, field: keyof RequestItem, value: string | number) => {
-    setItems(items.map((item) =>
-      item.id === id ? { ...item, [field]: value } : item
-    ));
+  const lookupInventoryItem = async (
+    searchValue: string,
+    searchBy: "id" | "description",
+  ) => {
+    if (!searchValue.trim()) return null;
+
+    const { data, error } = await supabase
+      .from("inventory")
+      .select("item_no, description, unit")
+      .ilike(searchBy === "id" ? "item_no" : "description", `%${searchValue}%`)
+      .limit(10);
+
+    if (error || !data) return null;
+    return data;
+  };
+
+  const handleItemChange = (
+    itemIndex: number,
+    field: keyof RequestItem,
+    value: string | number,
+  ) => {
+    // If clearing id or itemDescription, clear BOTH and unit
+    if ((field === "id" || field === "itemDescription") && value === "") {
+      setItems((prevItems) =>
+        prevItems.map((item, idx) =>
+          idx === itemIndex
+            ? {
+                ...item,
+                id: "",
+                itemDescription: "",
+                unitOfMeasure: "",
+                quantity: 1,
+                suggestions: [],
+                showSuggestions: false,
+                suggestionsFor: undefined,
+              }
+            : item,
+        ),
+      );
+      return;
+    }
+
+    // First, update the field value immediately (fast feedback)
+    let updatedItems = items.map((item, idx) =>
+      idx === itemIndex ? { ...item, [field]: value } : item,
+    );
+    setItems(updatedItems);
+
+    // Only debounce lookup for id and itemDescription
+    if (
+      (field === "id" || field === "itemDescription") &&
+      typeof value === "string"
+    ) {
+      const timerKey = `${itemIndex}-${field}`;
+
+      // Clear previous timer for this field
+      if (debounceTimersRef.current[timerKey]) {
+        clearTimeout(debounceTimersRef.current[timerKey]);
+      }
+
+      // Set new debounced timer (300ms delay)
+      debounceTimersRef.current[timerKey] = setTimeout(() => {
+        (async () => {
+          if (value.trim()) {
+            const results = await lookupInventoryItem(
+              value,
+              field === "id" ? "id" : "description",
+            );
+
+            setItems((prevItems) =>
+              prevItems.map((item, idx) =>
+                idx === itemIndex
+                  ? {
+                      ...item,
+                      suggestions: results
+                        ? results.map((r) =>
+                            field === "id" ? r.item_no : r.description,
+                          )
+                        : [],
+                      showSuggestions: !!(results && results.length > 0),
+                      suggestionsFor: field === "id" ? "id" : "description",
+                    }
+                  : item,
+              ),
+            );
+          } else {
+            // Clear suggestions if field is empty
+            setItems((prevItems) =>
+              prevItems.map((item, idx) =>
+                idx === itemIndex
+                  ? {
+                      ...item,
+                      suggestions: [],
+                      showSuggestions: false,
+                      suggestionsFor: undefined,
+                    }
+                  : item,
+              ),
+            );
+          }
+        })();
+      }, 300); // 300ms debounce delay
+    }
+  };
+
+  const selectSuggestion = async (
+    itemIndex: number,
+    suggestion: string,
+    searchBy: "id" | "description",
+  ) => {
+    // Build the query based on which field was searched
+    let query = supabase.from("inventory").select("item_no, description, unit");
+
+    if (searchBy === "id") {
+      query = query.eq("item_no", suggestion);
+    } else {
+      query = query.eq("description", suggestion);
+    }
+
+    const { data, error } = await query.single();
+
+    if (error || !data) return;
+
+    setItems(
+      items.map((item, idx) =>
+        idx === itemIndex
+          ? {
+              ...item,
+              id: data.item_no,
+              itemDescription: data.description,
+              unitOfMeasure: data.unit,
+              suggestions: [],
+              showSuggestions: false,
+              suggestionsFor: undefined,
+            }
+          : item,
+      ),
+    );
   };
 
   const validateStep1 = () => {
@@ -65,11 +235,17 @@ export function UserRequestPage() {
       toast.error("Please fill in all required fields");
       return false;
     }
-    if (personalInfo.userType === "student" && (!personalInfo.studentNumber || !personalInfo.college)) {
+    if (
+      personalInfo.userType === "student" &&
+      (!personalInfo.studentNumber || !personalInfo.college)
+    ) {
       toast.error("Please enter your student number and college");
       return false;
     }
-    if (personalInfo.userType === "faculty" && (!personalInfo.facultyId || !personalInfo.department)) {
+    if (
+      personalInfo.userType === "faculty" &&
+      (!personalInfo.facultyId || !personalInfo.department)
+    ) {
       toast.error("Please enter your faculty ID and department");
       return false;
     }
@@ -78,76 +254,80 @@ export function UserRequestPage() {
 
   const validateStep2 = () => {
     const hasEmptyItems = items.some(
-      (item) => !item.itemDescription || !item.unitOfMeasure || item.quantity < 1
+      (item) =>
+        !item.id ||
+        !item.itemDescription ||
+        !item.unitOfMeasure ||
+        item.quantity < 1,
     );
     if (hasEmptyItems) {
-      toast.error("Please fill in all item details");
+      toast.error("Please fill in all item details and select a quantity");
       return false;
     }
     return true;
   };
 
   const handleSubmitToSupabase = async () => {
-  setSubmitting(true);
+    setSubmitting(true);
 
-  try {
-    const department = personalInfo.userType === "faculty"
-      ? personalInfo.department
-      : personalInfo.college;
+    try {
+      const department =
+        personalInfo.userType === "faculty"
+          ? personalInfo.department
+          : personalInfo.college;
 
-    for (const item of items) {
-      // 1. Fetch by item_no instead of description
-      const { data: inventoryItem, error: fetchError } = await supabase
-        .from("inventory")
-        .select("item_no, description, unit, remaining_stock")
-        .eq("item_no", item.id)  // ← uses the ID field the user typed
-        .single();
+      for (const item of items) {
+        // 1. Fetch by item_no instead of description
+        const { data: inventoryItem, error: fetchError } = await supabase
+          .from("inventory")
+          .select("item_no, description, unit, remaining_stock")
+          .eq("item_no", item.id) // ← uses the ID field the user typed
+          .single();
 
-      if (fetchError || !inventoryItem) {
-        toast.error(`Item ID "${item.id}" was not found in inventory`);
-        setSubmitting(false);
-        return;
-      }
+        if (fetchError || !inventoryItem) {
+          toast.error(`Item ID "${item.id}" was not found in inventory`);
+          setSubmitting(false);
+          return;
+        }
 
-      // 2. Cross-check quantity against remaining stock
-      if (item.quantity > inventoryItem.remaining_stock) {
-        toast.error(
-          `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`
-        );
-        setSubmitting(false);
-        return;
-      }
+        // 2. Cross-check quantity against remaining stock
+        if (item.quantity > inventoryItem.remaining_stock) {
+          toast.error(
+            `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`,
+          );
+          setSubmitting(false);
+          return;
+        }
 
-      // 3. Insert request
-      const { error: insertError } = await supabase
-        .from("requests")
-        .insert({
+        // 3. Insert request
+        const { error: insertError } = await supabase.from("requests").insert({
           item_no: inventoryItem.item_no,
-          description: inventoryItem.description,  // auto-filled from inventory
-          unit: inventoryItem.unit,                 // auto-filled from inventory
+          description: inventoryItem.description, // auto-filled from inventory
+          unit: inventoryItem.unit, // auto-filled from inventory
           quantity_requested: item.quantity,
           requested_by: personalInfo.fullName,
           department: department,
           status: "pending",
         });
 
-      if (insertError) {
-        toast.error(`Failed to submit request for: ${inventoryItem.description}`);
-        console.error(insertError);
-        setSubmitting(false);
-        return;
+        if (insertError) {
+          toast.error(
+            `Failed to submit request for: ${inventoryItem.description}`,
+          );
+          console.error(insertError);
+          setSubmitting(false);
+          return;
+        }
       }
+
+      setCurrentStep(3);
+    } catch (error) {
+      toast.error("Something went wrong. Please try again.");
+      console.error(error);
+    } finally {
+      setSubmitting(false);
     }
-
-    setCurrentStep(3);
-
-  } catch (error) {
-    toast.error("Something went wrong. Please try again.");
-    console.error(error);
-  } finally {
-    setSubmitting(false);
-  }
-};
+  };
 
   const handleNextStep = () => {
     if (currentStep === 1 && validateStep1()) {
@@ -171,7 +351,17 @@ export function UserRequestPage() {
       college: "",
       department: "",
     });
-    setItems([{ id: "1", itemDescription: "", unitOfMeasure: "", quantity: 1 }]);
+    setItems([
+      {
+        id: "",
+        itemDescription: "",
+        unitOfMeasure: "",
+        quantity: 1,
+        suggestions: [],
+        showSuggestions: false,
+        suggestionsFor: undefined,
+      },
+    ]);
   };
 
   return (
@@ -196,7 +386,9 @@ export function UserRequestPage() {
               <PackageOpen className="w-8 h-8 text-[#4A89B0]" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-white">Requisition and Issue System</h1>
+              <h1 className="text-3xl font-bold text-white">
+                Requisition and Issue System
+              </h1>
               <p className="text-white/80">Submit your material requests</p>
             </div>
           </div>
@@ -211,18 +403,30 @@ export function UserRequestPage() {
             {[1, 2, 3].map((step, index) => (
               <>
                 <div key={step} className="flex items-center gap-2">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
-                    currentStep >= step ? "bg-[#4A89B0] text-white" : "bg-gray-200 text-gray-600"
-                  }`}>
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
+                      currentStep >= step
+                        ? "bg-[#4A89B0] text-white"
+                        : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
                     {step}
                   </div>
-                  <span className={`font-medium ${currentStep >= step ? "text-gray-900" : "text-gray-500"}`}>
-                    {step === 1 ? "Personal Info" : step === 2 ? "Request Materials" : "Confirmation"}
+                  <span
+                    className={`font-medium ${currentStep >= step ? "text-gray-900" : "text-gray-500"}`}
+                  >
+                    {step === 1
+                      ? "Personal Info"
+                      : step === 2
+                        ? "Request Materials"
+                        : "Confirmation"}
                   </span>
                 </div>
                 {index < 2 && (
                   <div className="flex-1 h-1 mx-4 bg-gray-200">
-                    <div className={`h-full transition-all ${currentStep > step ? "bg-[#4A89B0] w-full" : "w-0"}`} />
+                    <div
+                      className={`h-full transition-all ${currentStep > step ? "bg-[#4A89B0] w-full" : "w-0"}`}
+                    />
                   </div>
                 )}
               </>
@@ -232,23 +436,33 @@ export function UserRequestPage() {
 
         {/* Step Content */}
         <div className="bg-white rounded-2xl shadow-xl p-8 lg:p-12">
-
           {/* Step 1: Personal Information */}
           {currentStep === 1 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Personal Information</h2>
-                <p className="text-gray-600">Please provide your details to continue</p>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                  Personal Information
+                </h2>
+                <p className="text-gray-600">
+                  Please provide your details to continue
+                </p>
               </div>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Full Name *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Full Name *
+                  </label>
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input
                       type="text"
                       value={personalInfo.fullName}
-                      onChange={(e) => setPersonalInfo({ ...personalInfo, fullName: e.target.value })}
+                      onChange={(e) =>
+                        setPersonalInfo({
+                          ...personalInfo,
+                          fullName: e.target.value,
+                        })
+                      }
                       className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                       placeholder="Enter your full name"
                     />
@@ -256,11 +470,19 @@ export function UserRequestPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">I am a *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    I am a *
+                  </label>
                   <div className="grid grid-cols-2 gap-4">
                     <button
                       type="button"
-                      onClick={() => setPersonalInfo({ ...personalInfo, userType: "student", facultyId: "" })}
+                      onClick={() =>
+                        setPersonalInfo({
+                          ...personalInfo,
+                          userType: "student",
+                          facultyId: "",
+                        })
+                      }
                       className={`py-3 px-4 rounded-lg border-2 font-medium transition-all ${
                         personalInfo.userType === "student"
                           ? "border-[#4A89B0] bg-blue-50 text-[#4A89B0]"
@@ -271,7 +493,13 @@ export function UserRequestPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPersonalInfo({ ...personalInfo, userType: "faculty", studentNumber: "" })}
+                      onClick={() =>
+                        setPersonalInfo({
+                          ...personalInfo,
+                          userType: "faculty",
+                          studentNumber: "",
+                        })
+                      }
                       className={`py-3 px-4 rounded-lg border-2 font-medium transition-all ${
                         personalInfo.userType === "faculty"
                           ? "border-[#4A89B0] bg-blue-50 text-[#4A89B0]"
@@ -285,11 +513,18 @@ export function UserRequestPage() {
 
                 {personalInfo.userType === "student" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Student Number *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Student Number *
+                    </label>
                     <input
                       type="text"
                       value={personalInfo.studentNumber}
-                      onChange={(e) => setPersonalInfo({ ...personalInfo, studentNumber: e.target.value })}
+                      onChange={(e) =>
+                        setPersonalInfo({
+                          ...personalInfo,
+                          studentNumber: e.target.value,
+                        })
+                      }
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                       placeholder="Enter your student number"
                     />
@@ -298,11 +533,18 @@ export function UserRequestPage() {
 
                 {personalInfo.userType === "faculty" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Faculty ID *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Faculty ID *
+                    </label>
                     <input
                       type="text"
                       value={personalInfo.facultyId}
-                      onChange={(e) => setPersonalInfo({ ...personalInfo, facultyId: e.target.value })}
+                      onChange={(e) =>
+                        setPersonalInfo({
+                          ...personalInfo,
+                          facultyId: e.target.value,
+                        })
+                      }
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                       placeholder="Enter your faculty ID"
                     />
@@ -311,43 +553,79 @@ export function UserRequestPage() {
 
                 {personalInfo.userType === "student" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">College *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      College *
+                    </label>
                     <select
                       value={personalInfo.college}
-                      onChange={(e) => setPersonalInfo({ ...personalInfo, college: e.target.value })}
+                      onChange={(e) =>
+                        setPersonalInfo({
+                          ...personalInfo,
+                          college: e.target.value,
+                        })
+                      }
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                     >
                       <option value="">Select college</option>
-                      <option value="College of Engineering">College of Engineering</option>
-                      <option value="College of Science">College of Science</option>
-                      <option value="College of Humanities and Social Science">College of Humanities and Social Science</option>
-                      <option value="College of Business Administration">College of Business Administration</option>
-                      <option value="College of Education">College of Education</option>
-                      <option value="College of Nursing">College of Nursing</option>
-                      <option value="College of Information Systems and Technology Management">College of Information Systems and Technology Management</option>
+                      <option value="College of Engineering">
+                        College of Engineering
+                      </option>
+                      <option value="College of Science">
+                        College of Science
+                      </option>
+                      <option value="College of Humanities and Social Science">
+                        College of Humanities and Social Science
+                      </option>
+                      <option value="College of Business Administration">
+                        College of Business Administration
+                      </option>
+                      <option value="College of Education">
+                        College of Education
+                      </option>
+                      <option value="College of Nursing">
+                        College of Nursing
+                      </option>
+                      <option value="College of Information Systems and Technology Management">
+                        College of Information Systems and Technology Management
+                      </option>
                     </select>
                   </div>
                 )}
 
                 {personalInfo.userType === "faculty" && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Department *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Department *
+                    </label>
                     <select
                       value={personalInfo.department}
-                      onChange={(e) => setPersonalInfo({ ...personalInfo, department: e.target.value })}
+                      onChange={(e) =>
+                        setPersonalInfo({
+                          ...personalInfo,
+                          department: e.target.value,
+                        })
+                      }
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                     >
                       <option value="">Select department</option>
                       <option value="IT Department">IT Department</option>
                       <option value="HR Department">HR Department</option>
-                      <option value="Finance Department">Finance Department</option>
-                      <option value="Operations Department">Operations Department</option>
-                      <option value="Marketing Department">Marketing Department</option>
+                      <option value="Finance Department">
+                        Finance Department
+                      </option>
+                      <option value="Operations Department">
+                        Operations Department
+                      </option>
+                      <option value="Marketing Department">
+                        Marketing Department
+                      </option>
                       <option value="Academic Affairs">Academic Affairs</option>
                       <option value="Administration">Administration</option>
                       <option value="Library Services">Library Services</option>
                       <option value="Student Affairs">Student Affairs</option>
-                      <option value="Research and Development">Research and Development</option>
+                      <option value="Research and Development">
+                        Research and Development
+                      </option>
                     </select>
                   </div>
                 )}
@@ -370,62 +648,155 @@ export function UserRequestPage() {
           {currentStep === 2 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Request Materials</h2>
-                <p className="text-gray-600">Add the items you need. Item descriptions must match inventory exactly.</p>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                  Request Materials
+                </h2>
+                <p className="text-gray-600">
+                  Add the items you need. Item descriptions must match inventory
+                  exactly.
+                </p>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b-2 border-gray-300">
-                      <th className="text-left py-3 px-4 font-bold text-gray-900">#</th>
-                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[100px]">ID</th>
-                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[250px]">Item Description</th>
-                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[150px]">Unit of Mea.</th>
-                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[120px]">Quantity</th>
-                      <th className="py-3 px-4 w-16"></th>
+                      <th className="text-left py-3 px-4 font-bold text-gray-900">
+                        #
+                      </th>
+                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[140px]">
+                        Item No.
+                      </th>
+                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[280px]">
+                        Item Description
+                      </th>
+                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[100px]">
+                        Unit of Mea.
+                      </th>
+                      <th className="text-left py-3 px-4 font-bold text-gray-900 min-w-[80px]">
+                        Quantity
+                      </th>
+                      <th className="py-3 px-4 w-12"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.map((item, index) => (
-                      <tr key={item.id} className="border-b border-gray-200">
+                      <tr key={index} className="border-b border-gray-200">
                         <td className="py-3 px-4 text-gray-700">{index + 1}</td>
                         <td className="py-3 px-4">
-                          <input
-                            type="text"
-                            value={item.id}
-                            onChange={(e) => handleItemChange(item.id, "id", e.target.value)}
-                            className="w-full px-3 py-2 bg-green-100 border border-green-300 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
-                            placeholder="ID"
-                          />
+                          <div className="relative flex gap-0">
+                            <div className="w-14 bg-gray-200 border border-green-300 rounded-l flex items-center justify-center font-medium text-gray-700 text-sm">
+                              JMS
+                            </div>
+                            <input
+                              type="text"
+                              value={item.id.replace(/^JMS/, "")}
+                              onChange={(e) => {
+                                const numericOnly = e.target.value
+                                  .replace(/\D/g, "")
+                                  .slice(0, 3);
+                                handleItemChange(
+                                  index,
+                                  "id",
+                                  "JMS" + numericOnly,
+                                );
+                              }}
+                              maxLength={3}
+                              className="flex-1 px-3 py-2 bg-green-100 border border-green-300 rounded-r focus:ring-2 focus:ring-indigo-600 focus:border-transparent outline-none text-sm"
+                              placeholder="000"
+                            />
+                            {item.showSuggestions &&
+                              item.suggestionsFor === "id" &&
+                              item.suggestions &&
+                              item.suggestions.length > 0 && (
+                                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10">
+                                  {item.suggestions.map((suggestion, idx) => (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      onClick={() =>
+                                        selectSuggestion(
+                                          index,
+                                          suggestion,
+                                          "id",
+                                        )
+                                      }
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-blue-100 border-b border-gray-200 last:border-b-0"
+                                    >
+                                      {suggestion}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                          </div>
                         </td>
-                        <td className="py-3 px-4">
+                        <td className="py-3 px-4 relative">
                           <input
                             type="text"
                             value={item.itemDescription}
-                            onChange={(e) => handleItemChange(item.id, "itemDescription", e.target.value)}
+                            onChange={(e) =>
+                              handleItemChange(
+                                index,
+                                "itemDescription",
+                                e.target.value,
+                              )
+                            }
                             className="w-full px-3 py-2 bg-green-100 border border-green-300 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
                             placeholder="Enter item description"
                           />
+                          {item.showSuggestions &&
+                            item.suggestionsFor === "description" &&
+                            item.suggestions &&
+                            item.suggestions.length > 0 && (
+                              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10">
+                                {item.suggestions.map((suggestion, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() =>
+                                      selectSuggestion(
+                                        index,
+                                        suggestion,
+                                        "description",
+                                      )
+                                    }
+                                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-100 border-b border-gray-200 last:border-b-0"
+                                  >
+                                    {suggestion}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                         </td>
                         <td className="py-3 px-4">
-                          <select
+                          <input
+                            type="text"
                             value={item.unitOfMeasure}
-                            onChange={(e) => handleItemChange(item.id, "unitOfMeasure", e.target.value)}
-                            className="w-full px-3 py-2 bg-green-100 border border-green-300 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
-                          >
-                            <option value="">Select unit</option>
-                            {units.map((unit) => (
-                              <option key={unit} value={unit}>{unit}</option>
-                            ))}
-                          </select>
+                            readOnly
+                            className="w-full px-3 py-2 bg-gray-200 border border-gray-400 rounded cursor-not-allowed text-gray-700"
+                          />
                         </td>
                         <td className="py-3 px-4">
                           <input
                             type="number"
-                            value={item.quantity}
-                            onChange={(e) => handleItemChange(item.id, "quantity", parseInt(e.target.value) || 0)}
-                            className="w-full px-3 py-2 bg-green-100 border border-green-300 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+                            value={
+                              item.id && item.itemDescription
+                                ? item.quantity
+                                : ""
+                            }
+                            onChange={(e) =>
+                              handleItemChange(
+                                index,
+                                "quantity",
+                                parseInt(e.target.value) || 1,
+                              )
+                            }
+                            disabled={!item.id || !item.itemDescription}
+                            className={`w-full px-3 py-2 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent ${
+                              item.id && item.itemDescription
+                                ? "bg-green-100 border border-green-300 cursor-default"
+                                : "bg-gray-200 border border-gray-400 cursor-not-allowed text-gray-500"
+                            }`}
                             min="1"
                           />
                         </td>
@@ -433,7 +804,7 @@ export function UserRequestPage() {
                           {items.length > 1 && (
                             <button
                               type="button"
-                              onClick={() => handleRemoveItem(item.id)}
+                              onClick={() => handleRemoveItem(index)}
                               className="text-gray-400 hover:text-red-600 transition-colors p-1"
                             >
                               <Trash2 className="w-5 h-5" />
@@ -486,9 +857,12 @@ export function UserRequestPage() {
                 <Check className="w-12 h-12 text-green-600" />
               </div>
               <div>
-                <h2 className="text-3xl font-bold text-gray-900 mb-2">Request Sent Successfully!</h2>
+                <h2 className="text-3xl font-bold text-gray-900 mb-2">
+                  Request Sent Successfully!
+                </h2>
                 <p className="text-lg text-gray-600">
-                  Your inventory request has been submitted and is now pending admin review.
+                  Your inventory request has been submitted and is now pending
+                  admin review.
                 </p>
               </div>
               <div className="pt-6">
@@ -502,7 +876,6 @@ export function UserRequestPage() {
               </div>
             </div>
           )}
-
         </div>
       </div>
     </div>
