@@ -96,10 +96,22 @@ export function UserRequestPage() {
   ) => {
     if (!searchValue.trim()) return null;
 
+    // Determine the facility prefix based on user type
+    const facilityPrefix =
+      personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+
+    // If searching by ID, search with the full ID (prefix + separator + number)
+    const separator = personalInfo.userType === "faculty" ? "" : "-";
+    const searchTerm =
+      searchBy === "id"
+        ? `${facilityPrefix}${separator}${searchValue}`
+        : searchValue;
+
     const { data, error } = await supabase
       .from("inventory")
       .select("item_no, description, unit")
-      .ilike(searchBy === "id" ? "item_no" : "description", `%${searchValue}%`)
+      .ilike(searchBy === "id" ? "item_no" : "description", `%${searchTerm}%`)
+      .ilike("item_no", `${facilityPrefix}%`) // Filter by facility prefix
       .limit(10);
 
     if (error || !data) return null;
@@ -111,7 +123,7 @@ export function UserRequestPage() {
     field: keyof RequestItem,
     value: string | number,
   ) => {
-    // If clearing id or itemDescription, clear BOTH and unit
+    // If clearing id or itemDescription completely, clear all related fields
     if ((field === "id" || field === "itemDescription") && value === "") {
       setItems((prevItems) =>
         prevItems.map((item, idx) =>
@@ -132,10 +144,57 @@ export function UserRequestPage() {
       return;
     }
 
-    // First, update the field value immediately (fast feedback)
-    let updatedItems = items.map((item, idx) =>
-      idx === itemIndex ? { ...item, [field]: value } : item,
-    );
+    // Check if id or itemDescription was modified after a selection (digit/word removed/changed)
+    let shouldClearRelatedFields = false;
+    if (
+      field === "itemDescription" &&
+      typeof value === "string" &&
+      value.trim() !== ""
+    ) {
+      const currentItem = items[itemIndex];
+      // If there was a description before and it's different now, clear related fields
+      if (
+        currentItem.itemDescription &&
+        currentItem.itemDescription !== value &&
+        currentItem.id
+      ) {
+        shouldClearRelatedFields = true;
+      }
+    }
+    if (field === "id" && typeof value === "string" && value.trim() !== "") {
+      const currentItem = items[itemIndex];
+      // If there was an id before and it's different now, clear related fields
+      if (
+        currentItem.id &&
+        currentItem.id !== value &&
+        currentItem.itemDescription
+      ) {
+        shouldClearRelatedFields = true;
+      }
+    }
+
+    // Update the field value
+    let updatedItems = items.map((item, idx) => {
+      if (idx === itemIndex) {
+        let updatedItem = { ...item, [field]: value };
+        // If id or description was modified, also clear related fields
+        if (
+          shouldClearRelatedFields &&
+          (field === "itemDescription" || field === "id")
+        ) {
+          updatedItem = {
+            ...updatedItem,
+            id: field === "id" ? (value as string) : "",
+            itemDescription:
+              field === "itemDescription" ? (value as string) : "",
+            unitOfMeasure: "",
+            quantity: 1,
+          };
+        }
+        return updatedItem;
+      }
+      return item;
+    });
     setItems(updatedItems);
 
     // Only debounce lookup for id and itemDescription
@@ -155,7 +214,7 @@ export function UserRequestPage() {
         (async () => {
           if (value.trim()) {
             const results = await lookupInventoryItem(
-              value,
+              field === "id" ? value.replace(/^(JMS|GYM-S)(-)?/, "") : value,
               field === "id" ? "id" : "description",
             );
 
@@ -208,6 +267,11 @@ export function UserRequestPage() {
     } else {
       query = query.eq("description", suggestion);
     }
+
+    // Ensure facility filtering
+    const facilityPrefix =
+      personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+    query = query.ilike("item_no", `${facilityPrefix}%`);
 
     const { data, error } = await query.single();
 
@@ -276,16 +340,23 @@ export function UserRequestPage() {
           ? personalInfo.department
           : personalInfo.college;
 
+      // Determine allowed facility prefix
+      const facilityPrefix =
+        personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+
       for (const item of items) {
-        // 1. Fetch by item_no instead of description
+        // 1. Fetch by item_no and verify facility prefix
         const { data: inventoryItem, error: fetchError } = await supabase
           .from("inventory")
           .select("item_no, description, unit, remaining_stock")
-          .eq("item_no", item.id) // ← uses the ID field the user typed
+          .eq("item_no", item.id)
+          .ilike("item_no", `${facilityPrefix}%`) // Ensure correct facility
           .single();
 
         if (fetchError || !inventoryItem) {
-          toast.error(`Item ID "${item.id}" was not found in inventory`);
+          toast.error(
+            `Item ID "${item.id}" not found or not available for your account type.`,
+          );
           setSubmitting(false);
           return;
         }
@@ -338,7 +409,32 @@ export function UserRequestPage() {
   };
 
   const handlePrevStep = () => {
-    if (currentStep > 1) setCurrentStep(currentStep - 1);
+    if (currentStep > 1) {
+      // Clear items when going back from step 2 to step 1
+      if (currentStep === 2) {
+        setItems([
+          {
+            id: "",
+            itemDescription: "",
+            unitOfMeasure: "",
+            quantity: 1,
+            suggestions: [],
+            showSuggestions: false,
+            suggestionsFor: undefined,
+          },
+        ]);
+        // Clear personal info as well
+        setPersonalInfo({
+          fullName: "",
+          userType: "",
+          studentNumber: "",
+          facultyId: "",
+          college: "",
+          department: "",
+        });
+      }
+      setCurrentStep(currentStep - 1);
+    }
   };
 
   const handleStartNewRequest = () => {
@@ -534,7 +630,7 @@ export function UserRequestPage() {
                 {personalInfo.userType === "faculty" && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Faculty ID *
+                      Phone Number *
                     </label>
                     <input
                       type="text"
@@ -546,7 +642,7 @@ export function UserRequestPage() {
                         })
                       }
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                      placeholder="Enter your faculty ID"
+                      placeholder="Enter your phone number"
                     />
                   </div>
                 )}
@@ -566,7 +662,9 @@ export function UserRequestPage() {
                       }
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                     >
-                      <option value="">Select college</option>
+                      <option value="" disabled hidden>
+                        Select college
+                      </option>
                       <option value="College of Engineering">
                         College of Engineering
                       </option>
@@ -607,7 +705,9 @@ export function UserRequestPage() {
                       }
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                     >
-                      <option value="">Select department</option>
+                      <option value="" disabled hidden>
+                        Select department
+                      </option>
                       <option value="IT Department">IT Department</option>
                       <option value="HR Department">HR Department</option>
                       <option value="Finance Department">
@@ -685,24 +785,34 @@ export function UserRequestPage() {
                         <td className="py-3 px-4 text-gray-700">{index + 1}</td>
                         <td className="py-3 px-4">
                           <div className="relative flex gap-0">
-                            <div className="w-14 bg-gray-200 border border-green-300 rounded-l flex items-center justify-center font-medium text-gray-700 text-sm">
-                              JMS
+                            <div className="w-20 bg-gray-200 border border-green-300 rounded-l flex items-center justify-center font-medium text-gray-700 text-sm">
+                              {personalInfo.userType === "faculty"
+                                ? "JMS"
+                                : "GYM-S"}
                             </div>
                             <input
                               type="text"
-                              value={item.id.replace(/^JMS/, "")}
+                              value={item.id.replace(/^(JMS|GYM-S)(-)?/, "")}
                               onChange={(e) => {
+                                const facilityPrefix =
+                                  personalInfo.userType === "faculty"
+                                    ? "JMS"
+                                    : "GYM-S";
                                 const numericOnly = e.target.value
                                   .replace(/\D/g, "")
                                   .slice(0, 3);
+                                const separator =
+                                  personalInfo.userType === "faculty"
+                                    ? ""
+                                    : "-";
                                 handleItemChange(
                                   index,
                                   "id",
-                                  "JMS" + numericOnly,
+                                  facilityPrefix + separator + numericOnly,
                                 );
                               }}
                               maxLength={3}
-                              className="flex-1 px-3 py-2 bg-green-100 border border-green-300 rounded-r focus:ring-2 focus:ring-indigo-600 focus:border-transparent outline-none text-sm"
+                              className="w-16 px-2 py-2 bg-green-100 border border-green-300 rounded-r focus:ring-2 focus:ring-indigo-600 focus:border-transparent outline-none text-sm"
                               placeholder="000"
                             />
                             {item.showSuggestions &&
