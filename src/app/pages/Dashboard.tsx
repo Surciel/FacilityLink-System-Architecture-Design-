@@ -106,32 +106,22 @@ export function Dashboard() {
 
   const stats = [
     {
-      label: "Pending Requests",
-      value: loading ? "..." : requests.filter(r => r.status === "pending").length,
-      icon: Clock,
-      color: "bg-orange-500",
-      trend: "+0%",
-    },
-    {
       label: "Total Items",
       value: loading ? "..." : totalItems,
       icon: PackageOpen,
       color: "bg-blue-500",
-      trend: "+0%",
     },
     {
       label: "Low Stock Items",
       value: loading ? "..." : lowStockItems.length,
       icon: AlertTriangle,
       color: "bg-red-500",
-      trend: "+0%",
     },
     {
-      label: "Completed Today",
+      label: "Requests Today",
       value: loading ? "..." : completedToday,
       icon: TrendingUp,
       color: "bg-green-500",
-      trend: "+0%",
     },
   ];
 
@@ -220,7 +210,6 @@ export function Dashboard() {
                       <div className={`${stat.color} p-3 rounded-lg`}>
                         <Icon className="w-6 h-6 text-white" />
                       </div>
-                      <span className="text-sm font-medium text-green-600">{stat.trend}</span>
                     </div>
                     <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
                     <div className="text-sm text-gray-600 mt-1">{stat.label}</div>
@@ -239,9 +228,6 @@ export function Dashboard() {
                     <div className="flex items-center gap-2">
                       <Bell className="w-5 h-5 text-[#4A89B0]" />
                       <h2 className="text-xl font-bold text-gray-900">Recent Requests</h2>
-                      <span className="bg-red-500 text-white text-xs px-2 py-1 rounded-full">
-                        {requests.filter(r => r.status === "pending").length} pending
-                      </span>
                     </div>
                     <button
                       onClick={() => navigate("/admin/inbox")}
@@ -271,15 +257,11 @@ export function Dashboard() {
                     filteredRequests.slice(0, 5).map((request) => (
                       <div
                         key={request.pkid}
-                        className={`p-4 hover:bg-gray-50 cursor-pointer transition-colors ${
-                          request.status === "pending" ? "bg-blue-50/50" : ""
-                        }`}
+                        className="p-4 hover:bg-gray-50 cursor-pointer transition-colors"
                         onClick={() => navigate("/admin/inbox")}
                       >
                         <div className="flex items-start gap-4">
-                          <div className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
-                            request.status === "pending" ? "bg-blue-600" : "bg-gray-300"
-                          }`} />
+                          <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0 bg-blue-600" />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-4 mb-1">
                               <div className="flex items-center gap-2">
@@ -295,15 +277,6 @@ export function Dashboard() {
                             </div>
                             <div className="text-sm text-gray-700">
                               Item: {request.description} — Qty: {request.quantity_requested} {request.unit}
-                            </div>
-                            <div className="mt-1">
-                              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                                request.status === "pending" ? "bg-orange-100 text-orange-700" :
-                                request.status === "approved" ? "bg-green-100 text-green-700" :
-                                "bg-red-100 text-red-700"
-                              }`}>
-                                {request.status}
-                              </span>
                             </div>
                           </div>
                         </div>

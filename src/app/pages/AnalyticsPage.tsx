@@ -12,7 +12,8 @@ import {
   CartesianGrid, 
   Tooltip, 
   Legend, 
-  ResponsiveContainer 
+  ResponsiveContainer,
+  Label
 } from "recharts";
 import { 
   Download, 
@@ -29,7 +30,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
-import { supabase } from "../../supabaseClient"; // adjust path if needed
+import { supabase } from "../../supabaseClient";
 
 export function AnalyticsPage() {
   const navigate = useNavigate();
@@ -39,7 +40,6 @@ export function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
 
   // Chart data states
-  const [weeklyRequestData, setWeeklyRequestData] = useState<any[]>([]);
   const [monthlyTrendData, setMonthlyTrendData] = useState<any[]>([]);
   const [categoryDistribution, setCategoryDistribution] = useState<any[]>([]);
   const [topRequestedItems, setTopRequestedItems] = useState<any[]>([]);
@@ -47,9 +47,7 @@ export function AnalyticsPage() {
 
   // Stat card states
   const [totalRequestsWeek, setTotalRequestsWeek] = useState(0);
-  const [approvalRate, setApprovalRate] = useState(0);
   const [itemsNeedRestock, setItemsNeedRestock] = useState(0);
-  const [avgDaysToProcess, setAvgDaysToProcess] = useState(0);
 
   useEffect(() => {
     fetchAllData();
@@ -79,22 +77,10 @@ export function AnalyticsPage() {
 
     const { data, error } = await supabase
       .from("requests")
-      .select("created_at, status")
+      .select("created_at")
       .gte("created_at", sevenDaysAgo.toISOString());
 
     if (error) return console.error(error);
-
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const grouped: Record<string, { day: string; approved: number; rejected: number }> = {};
-
-    (data || []).forEach((row) => {
-      const day = days[new Date(row.created_at).getDay()];
-      if (!grouped[day]) grouped[day] = { day, approved: 0, rejected: 0 };
-      if (row.status === "approved") grouped[day].approved++;
-      if (row.status === "rejected") grouped[day].rejected++;
-    });
-
-    setWeeklyRequestData(Object.values(grouped));
     setTotalRequestsWeek(data?.length || 0);
   };
 
@@ -110,11 +96,11 @@ export function AnalyticsPage() {
     if (error) return console.error(error);
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const grouped: Record<string, { month: string; items: number; value: number }> = {};
+    const grouped: Record<string, { month: string; items: number }> = {};
 
     (data || []).forEach((row) => {
       const month = months[new Date(row.created_at).getMonth()];
-      if (!grouped[month]) grouped[month] = { month, items: 0, value: 0 };
+      if (!grouped[month]) grouped[month] = { month, items: 0 };
       grouped[month].items += row.quantity_requested || 0;
     });
 
@@ -193,20 +179,6 @@ export function AnalyticsPage() {
   };
 
   const fetchSummaryStats = async () => {
-    // Approval rate
-    const { data: allRequests } = await supabase
-      .from("requests")
-      .select("status, created_at");
-
-    if (allRequests && allRequests.length > 0) {
-      const approved = allRequests.filter((r) => r.status === "approved");
-      setApprovalRate(Math.round((approved.length / allRequests.length) * 100));
-
-      // Avg days to process (approved requests only)
-      // This assumes you add a processed_at column later; for now uses created_at as placeholder
-      setAvgDaysToProcess(approved.length > 0 ? 1 : 0);
-    }
-
     // Items needing restock (remaining_stock = 0)
     const { count } = await supabase
       .from("inventory")
@@ -310,7 +282,7 @@ export function AnalyticsPage() {
             </div>
 
             {/* Key Insights */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-sm p-6 text-white">
                 <div className="flex items-center justify-between mb-2">
                   <Package className="w-8 h-8 opacity-80" />
@@ -318,20 +290,6 @@ export function AnalyticsPage() {
                 </div>
                 <div className="text-3xl font-bold">{loading ? "..." : totalRequestsWeek}</div>
                 <div className="text-sm opacity-90 mt-1">Total Requests (Week)</div>
-                <div className="text-xs opacity-75 mt-2">{loading ? "Loading..." : "Live data"}</div>
-              </div>
-
-              <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-sm p-6 text-white">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="bg-white/20 p-2 rounded-lg">
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                  <TrendingUp className="w-5 h-5" />
-                </div>
-                <div className="text-3xl font-bold">{loading ? "..." : `${approvalRate}%`}</div>
-                <div className="text-sm opacity-90 mt-1">Approval Rate</div>
                 <div className="text-xs opacity-75 mt-2">{loading ? "Loading..." : "Live data"}</div>
               </div>
 
@@ -344,50 +302,10 @@ export function AnalyticsPage() {
                 <div className="text-sm opacity-90 mt-1">Items Need Restock</div>
                 <div className="text-xs opacity-75 mt-2">{loading ? "Loading..." : "Items at 0 stock"}</div>
               </div>
-
-              <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-sm p-6 text-white">
-                <div className="flex items-center justify-between mb-2">
-                  <Calendar className="w-8 h-8 opacity-80" />
-                  <TrendingUp className="w-5 h-5" />
-                </div>
-                <div className="text-3xl font-bold">{loading ? "..." : avgDaysToProcess}</div>
-                <div className="text-sm opacity-90 mt-1">Avg. Days to Process</div>
-                <div className="text-xs opacity-75 mt-2">{loading ? "Loading..." : "Live data"}</div>
-              </div>
             </div>
 
-            {/* Charts Row 1 - unchanged JSX, now uses state instead of empty arrays */}
+            {/* Charts Row 1 */}
             <div className="grid lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">Weekly Request Overview</h3>
-                    <p className="text-sm text-gray-600 mt-1">Breakdown of requests by status</p>
-                  </div>
-                </div>
-                {weeklyRequestData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={weeklyRequestData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="day" />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="approved" fill="#10b981" name="Approved" />
-                      <Bar dataKey="rejected" fill="#ef4444" name="Rejected" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-[300px] flex items-center justify-center text-gray-400">
-                    <div className="text-center">
-                      <BarChart3 className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">{loading ? "Loading..." : "No data available"}</p>
-                      <p className="text-xs">Data will appear once requests are submitted</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                 <div className="flex items-center justify-between mb-6">
                   <div>
@@ -411,38 +329,6 @@ export function AnalyticsPage() {
                   <div className="h-[300px] flex items-center justify-center text-gray-400">
                     <div className="text-center">
                       <Package className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">{loading ? "Loading..." : "No data available"}</p>
-                      <p className="text-xs">Data will appear once requests are submitted</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Charts Row 2 */}
-            <div className="grid lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">6-Month Trend Analysis</h3>
-                    <p className="text-sm text-gray-600 mt-1">Items distributed over time</p>
-                  </div>
-                </div>
-                {monthlyTrendData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={monthlyTrendData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis dataKey="month" />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Line type="monotone" dataKey="items" stroke="#3b82f6" strokeWidth={2} name="Items Distributed" />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-[300px] flex items-center justify-center text-gray-400">
-                    <div className="text-center">
-                      <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-30" />
                       <p className="text-sm">{loading ? "Loading..." : "No data available"}</p>
                       <p className="text-xs">Data will appear once requests are submitted</p>
                     </div>
@@ -477,6 +363,38 @@ export function AnalyticsPage() {
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Charts Row 2 - 6-Month Trend */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-xl font-bold text-gray-900">6-Month Trend Analysis</h3>
+                  <p className="text-sm text-gray-600 mt-1">Items distributed over time</p>
+                </div>
+              </div>
+              {monthlyTrendData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={monthlyTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="month" />
+                    <YAxis>
+                      <Label value="Number of Items" angle={-90} position="insideLeft" style={{ textAnchor: 'middle' }} />
+                    </YAxis>
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="items" stroke="#3b82f6" strokeWidth={2} name="Items Distributed" />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-gray-400">
+                  <div className="text-center">
+                    <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">{loading ? "Loading..." : "No data available"}</p>
+                    <p className="text-xs">Data will appear once requests are submitted</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* DSS - Top Requested Items */}
@@ -530,7 +448,7 @@ export function AnalyticsPage() {
               )}
             </div>
 
-            {/* Report Generation - unchanged */}
+            {/* Report Generation */}
             <div className="bg-gradient-to-br from-[#5891B8] via-[#4A89B0] to-[#3776A0] rounded-xl shadow-sm p-8 text-white">
               <div className="flex items-center justify-between mb-6">
                 <div>
