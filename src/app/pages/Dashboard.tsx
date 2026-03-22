@@ -3,7 +3,6 @@ import {
   PackageOpen, 
   AlertTriangle, 
   TrendingUp, 
-  Clock,
   ChevronRight,
   Search,
   Bell,
@@ -22,7 +21,6 @@ export function Dashboard() {
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Data states
   const [requests, setRequests] = useState<any[]>([]);
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
   const [totalItems, setTotalItems] = useState(0);
@@ -53,14 +51,13 @@ export function Dashboard() {
       .from("requests")
       .select("*")
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(30);
 
     if (error) return console.error(error);
     setRequests(data || []);
   };
 
   const fetchLowStockItems = async () => {
-    // Items where remaining_stock is 0 or very low (adjust threshold as needed)
     const { data, error } = await supabase
       .from("inventory")
       .select("item_no, description, unit, remaining_stock")
@@ -88,7 +85,6 @@ export function Dashboard() {
     const { count, error } = await supabase
       .from("requests")
       .select("*", { count: "exact", head: true })
-      .eq("status", "approved")
       .gte("created_at", today.toISOString());
 
     if (error) return console.error(error);
@@ -125,10 +121,27 @@ export function Dashboard() {
     },
   ];
 
-  const filteredRequests = requests.filter(req =>
-    (req.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-    (req.id?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-    (req.department?.toLowerCase() || "").includes(searchQuery.toLowerCase())
+  // Group requests by request_group_id
+  const getGroupedRequests = () => {
+    const groups: Record<string, any[]> = {};
+    requests.forEach(req => {
+      const key = req.request_group_id || req.pkid;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(req);
+    });
+    return Object.entries(groups).map(([groupKey, groupItems]) => ({
+      groupKey,
+      groupItems,
+      first: groupItems[0],
+    }));
+  };
+
+  const filteredGroups = getGroupedRequests().filter(({ first, groupItems }) =>
+    (first.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+    (first.department?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+    groupItems.some(item =>
+      (item.description?.toLowerCase() || "").includes(searchQuery.toLowerCase())
+    )
   );
 
   return (
@@ -251,12 +264,12 @@ export function Dashboard() {
                 <div className="divide-y divide-gray-100">
                   {loading ? (
                     <div className="p-8 text-center text-gray-400">Loading requests...</div>
-                  ) : filteredRequests.length === 0 ? (
+                  ) : filteredGroups.length === 0 ? (
                     <div className="p-8 text-center text-gray-400">No requests found</div>
                   ) : (
-                    filteredRequests.slice(0, 5).map((request) => (
+                    filteredGroups.slice(0, 5).map(({ groupKey, groupItems, first }) => (
                       <div
-                        key={request.pkid}
+                        key={groupKey}
                         className="p-4 hover:bg-gray-50 cursor-pointer transition-colors"
                         onClick={() => navigate("/admin/inbox")}
                       >
@@ -265,18 +278,20 @@ export function Dashboard() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-4 mb-1">
                               <div className="flex items-center gap-2">
-                                <span className="font-semibold text-gray-900">{request.requested_by}</span>
-                                <span className="text-xs text-gray-500">({request.department})</span>
+                                <span className="font-semibold text-gray-900">{first.requested_by}</span>
+                                <span className="text-xs text-gray-500">({first.department})</span>
                               </div>
                               <span className="text-xs text-gray-500 whitespace-nowrap">
-                                {new Date(request.created_at).toLocaleDateString()}
+                                {new Date(first.created_at).toLocaleDateString()}
                               </span>
                             </div>
-                            <div className="text-sm text-gray-600 mb-1">
-                              <span className="font-mono">{request.pkid?.slice(0, 8) ?? "N/A"}...</span>
-                            </div>
                             <div className="text-sm text-gray-700">
-                              Item: {request.description} — Qty: {request.quantity_requested} {request.unit}
+                              {groupItems.map((item, idx) => (
+                                <span key={idx}>
+                                  {idx > 0 && " — "}
+                                  {item.description} ({item.quantity_requested} {item.unit})
+                                </span>
+                              ))}
                             </div>
                           </div>
                         </div>
@@ -311,7 +326,6 @@ export function Dashboard() {
                     <div className="text-center text-gray-400 py-4">All items are well stocked!</div>
                   ) : (
                     lowStockItems.map((item, index) => {
-                      // Use 10 as the minimum threshold for progress bar
                       const minimum = 10;
                       const percentage = Math.min((item.remaining_stock / minimum) * 100, 100);
                       return (

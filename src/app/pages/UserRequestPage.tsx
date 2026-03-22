@@ -332,73 +332,79 @@ export function UserRequestPage() {
   };
 
   const handleSubmitToSupabase = async () => {
-    setSubmitting(true);
+  setSubmitting(true);
 
-    try {
-      const department =
-        personalInfo.userType === "faculty"
-          ? personalInfo.department
-          : personalInfo.college;
+  try {
+    const department = personalInfo.userType === "faculty"
+      ? personalInfo.department
+      : personalInfo.college;
 
-      // Determine allowed facility prefix
-      const facilityPrefix =
-        personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+    const facilityPrefix = personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+    const groupId = crypto.randomUUID();
 
-      for (const item of items) {
-        // 1. Fetch by item_no and verify facility prefix
-        const { data: inventoryItem, error: fetchError } = await supabase
-          .from("inventory")
-          .select("item_no, description, unit, remaining_stock")
-          .eq("item_no", item.id)
-          .ilike("item_no", `${facilityPrefix}%`) // Ensure correct facility
-          .single();
+    for (const item of items) {
+      // 1. Fetch inventory item
+      const { data: inventoryItem, error: fetchError } = await supabase
+        .from("inventory")
+        .select("item_no, description, unit, remaining_stock")
+        .eq("item_no", item.id)
+        .ilike("item_no", `${facilityPrefix}%`)
+        .single();
 
-        if (fetchError || !inventoryItem) {
-          toast.error(
-            `Item ID "${item.id}" not found or not available for your account type.`,
-          );
-          setSubmitting(false);
-          return;
-        }
-
-        // 2. Cross-check quantity against remaining stock
-        if (item.quantity > inventoryItem.remaining_stock) {
-          toast.error(
-            `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`,
-          );
-          setSubmitting(false);
-          return;
-        }
-
-        // 3. Insert request
-        const { error: insertError } = await supabase.from("requests").insert({
-          item_no: inventoryItem.item_no,
-          description: inventoryItem.description, // auto-filled from inventory
-          unit: inventoryItem.unit, // auto-filled from inventory
-          quantity_requested: item.quantity,
-          requested_by: personalInfo.fullName,
-          department: department,
-          status: "pending",
-        });
-
-        if (insertError) {
-          toast.error(
-            `Failed to submit request for: ${inventoryItem.description}`,
-          );
-          console.error(insertError);
-          setSubmitting(false);
-          return;
-        }
+      if (fetchError || !inventoryItem) {
+        toast.error(`Item ID "${item.id}" not found or not available for your account type.`);
+        setSubmitting(false);
+        return;
       }
 
-      setCurrentStep(3);
-    } catch (error) {
-      toast.error("Something went wrong. Please try again.");
-      console.error(error);
-    } finally {
-      setSubmitting(false);
+      // 2. Cross-check quantity against remaining stock
+      if (item.quantity > inventoryItem.remaining_stock) {
+        toast.error(`Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`);
+        setSubmitting(false);
+        return;
+      }
+
+      // 3. Insert request as "approved" immediately
+      const { error: insertError } = await supabase.from("requests").insert({
+        item_no: inventoryItem.item_no,
+        description: inventoryItem.description,
+        unit: inventoryItem.unit,
+        quantity_requested: item.quantity,
+        requested_by: personalInfo.fullName,
+        department: department,
+        status: "approved", // ← auto approved
+        request_group_id: groupId,
+      });
+
+      if (insertError) {
+        toast.error(`Failed to submit request for: ${inventoryItem.description}`);
+        console.error(insertError);
+        setSubmitting(false);
+        return;
+      }
+
+      // 4. Subtract stock immediately
+      const { error: stockError } = await supabase
+        .from("inventory")
+        .update({ remaining_stock: inventoryItem.remaining_stock - item.quantity })
+        .eq("item_no", inventoryItem.item_no);
+
+      if (stockError) {
+        toast.error(`Failed to update stock for: ${inventoryItem.description}`);
+        console.error(stockError);
+        setSubmitting(false);
+        return;
+      }
     }
-  };
+
+    setCurrentStep(3);
+  } catch (error) {
+    toast.error("Something went wrong. Please try again.");
+    console.error(error);
+  } finally {
+    setSubmitting(false);
+  }
+};
 
   const handleNextStep = () => {
     if (currentStep === 1 && validateStep1()) {

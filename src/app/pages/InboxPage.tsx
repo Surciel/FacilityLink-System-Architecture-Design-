@@ -10,7 +10,8 @@ import {
   Inbox,
   BarChart3,
   LogOut,
-  Package
+  Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
@@ -24,17 +25,31 @@ interface Request {
   description: string;
   unit: string;
   quantity_requested: number;
+  status: string;
   created_at: string;
+  request_group_id: string | null;
+}
+
+interface GroupedRequest {
+  group_id: string;
+  requested_by: string;
+  department: string;
+  created_at: string;
+  status: string;
+  items: Request[];
 }
 
 export function InboxPage() {
   const navigate = useNavigate();
-  const [requests, setRequests] = useState<Request[]>([]);
-  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
+  const [groupedRequests, setGroupedRequests] = useState<GroupedRequest[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<GroupedRequest | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<GroupedRequest | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     fetchRequests();
@@ -50,21 +65,88 @@ export function InboxPage() {
     if (error) {
       toast.error("Failed to load requests");
       console.error(error);
-    } else {
-      setRequests(data || []);
+      setLoading(false);
+      return;
     }
+
+    const groups: Record<string, GroupedRequest> = {};
+
+    (data || []).forEach((req: Request) => {
+      const groupKey = req.request_group_id || req.pkid;
+      if (!groups[groupKey]) {
+        groups[groupKey] = {
+          group_id: groupKey,
+          requested_by: req.requested_by,
+          department: req.department,
+          created_at: req.created_at,
+          status: req.status,
+          items: [],
+        };
+      }
+      groups[groupKey].items.push(req);
+    });
+
+    const sorted = Object.values(groups).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    setGroupedRequests(sorted);
     setLoading(false);
   };
 
-  const filteredRequests = requests.filter(request => {
-    const matchesSearch =
-      (request.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-      (request.pkid?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-      (request.department?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-      (request.description?.toLowerCase() || "").includes(searchQuery.toLowerCase());
+  const handleDelete = async () => {
+    if (!groupToDelete) return;
+    setDeleteLoading(true);
 
-    return matchesSearch;
-  });
+    for (const item of groupToDelete.items) {
+      const { data: inventoryItem, error: fetchError } = await supabase
+        .from("inventory")
+        .select("remaining_stock")
+        .eq("item_no", item.item_no)
+        .single();
+
+      if (fetchError || !inventoryItem) {
+        toast.error(`Could not fetch stock for: ${item.description}`);
+        setDeleteLoading(false);
+        return;
+      }
+
+      const { error: restoreError } = await supabase
+        .from("inventory")
+        .update({ remaining_stock: inventoryItem.remaining_stock + item.quantity_requested })
+        .eq("item_no", item.item_no);
+
+      if (restoreError) {
+        toast.error(`Failed to restore stock for: ${item.description}`);
+        setDeleteLoading(false);
+        return;
+      }
+
+      const { error: deleteError } = await supabase
+        .from("requests")
+        .delete()
+        .eq("pkid", item.pkid);
+
+      if (deleteError) {
+        toast.error(`Failed to delete request for: ${item.description}`);
+        setDeleteLoading(false);
+        return;
+      }
+    }
+
+    toast.success("Request deleted and stock restored!");
+    setShowDeleteModal(false);
+    setGroupToDelete(null);
+    setSelectedGroup(null);
+    fetchRequests();
+    setDeleteLoading(false);
+  };
+
+  const filteredGroups = groupedRequests.filter(group =>
+    (group.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+    (group.department?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
+    group.items.some(i => (i.description?.toLowerCase() || "").includes(searchQuery.toLowerCase()))
+  );
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -140,13 +222,13 @@ export function InboxPage() {
 
             {/* Header */}
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Inbox</h1>
+              <h1 className="text-3xl font-bold text-gray-900">Requests</h1>
               <p className="text-gray-600 mt-1">View all inventory requests</p>
             </div>
 
             {/* Filters */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
                   <div className="relative">
@@ -155,17 +237,15 @@ export function InboxPage() {
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search by name, ID, department, or item..."
+                      placeholder="Search by name, department, or item..."
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                     />
                   </div>
                 </div>
               </div>
-              <div className="mt-4 flex items-center gap-4 text-sm text-gray-600">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4" />
-                  <span>Showing {filteredRequests.length} of {requests.length} requests</span>
-                </div>
+              <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
+                <Filter className="w-4 h-4" />
+                <span>Showing {filteredGroups.length} of {groupedRequests.length} requests</span>
               </div>
             </div>
 
@@ -178,39 +258,60 @@ export function InboxPage() {
                   <div className="bg-white rounded-lg p-12 text-center text-gray-400">
                     Loading requests...
                   </div>
-                ) : filteredRequests.length === 0 ? (
+                ) : filteredGroups.length === 0 ? (
                   <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
                     <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                     <p className="text-gray-600">No requests found</p>
                   </div>
                 ) : (
-                  filteredRequests.map((request) => (
+                  filteredGroups.map((group) => (
                     <div
-                      key={request.pkid}
-                      onClick={() => setSelectedRequest(request)}
-                      className={`bg-white rounded-lg shadow-sm border border-gray-200 cursor-pointer transition-all hover:shadow-md ${selectedRequest?.pkid === request.pkid ? "ring-2 ring-[#4A89B0]" : ""}`}
+                      key={group.group_id}
+                      onClick={() => setSelectedGroup(group)}
+                      className={`bg-white rounded-lg shadow-sm border border-gray-200 cursor-pointer transition-all hover:shadow-md ${
+                        selectedGroup?.group_id === group.group_id ? "ring-2 ring-[#4A89B0]" : ""
+                      }`}
                     >
                       <div className="p-5">
                         <div className="flex items-start justify-between mb-3">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-semibold text-gray-900">{request.requested_by}</h3>
-                              <span className="text-xs text-gray-500">({request.department})</span>
+                              <h3 className="font-semibold text-gray-900">{group.requested_by}</h3>
+                              <span className="text-xs text-gray-500">({group.department})</span>
                             </div>
                             <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
                               <Calendar className="w-3 h-3" />
-                              {new Date(request.created_at).toLocaleDateString()}
+                              {new Date(group.created_at).toLocaleDateString()}
                             </div>
                           </div>
-                        </div>
-                        <div className="bg-gray-50 rounded-lg p-3">
-                          <div className="text-sm font-medium text-gray-700 mb-1">Requested Item:</div>
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-gray-700">{request.description}</span>
-                            <span className="bg-white px-2 py-0.5 rounded text-gray-900 font-medium border">
-                              × {request.quantity_requested} {request.unit}
+                          <div className="flex flex-col items-end gap-2">
+                            <span className="text-xs text-gray-500">
+                              {group.items.length} item{group.items.length > 1 ? "s" : ""}
                             </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setGroupToDelete(group);
+                                setShowDeleteModal(true);
+                              }}
+                              className="flex items-center gap-1 text-xs bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700 px-2 py-1 rounded-lg transition-colors border border-red-200"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              Delete
+                            </button>
                           </div>
+                        </div>
+
+                        <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                          <div className="text-sm font-medium text-gray-700">Requested Items:</div>
+                          {group.items.map((item, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-sm">
+                              <span className="text-gray-700">{item.description}</span>
+                              <span className="bg-[#4A89B0] text-white px-2 py-0.5 rounded text-xs font-medium">
+                                × {item.quantity_requested} {item.unit}
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </div>
@@ -220,37 +321,41 @@ export function InboxPage() {
 
               {/* Detail View */}
               <div className="lg:col-span-1">
-                {selectedRequest ? (
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 sticky top-24">
+                {selectedGroup ? (
+                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto">
                     <h3 className="text-xl font-bold text-gray-900 mb-4">Request Details</h3>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Request ID</label>
-                        <div className="font-mono text-sm mt-1">{selectedRequest.pkid}</div>
-                      </div>
-                      <div>
                         <label className="text-xs font-medium text-gray-500">Requested By</label>
-                        <div className="text-sm mt-1">{selectedRequest.requested_by}</div>
+                        <div className="text-sm mt-1">{selectedGroup.requested_by}</div>
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Department</label>
-                        <div className="text-sm mt-1">{selectedRequest.department}</div>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-gray-500">Item</label>
-                        <div className="text-sm mt-1">{selectedRequest.description}</div>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-gray-500">Item No.</label>
-                        <div className="text-sm font-mono mt-1">{selectedRequest.item_no}</div>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-gray-500">Quantity Requested</label>
-                        <div className="text-sm mt-1">{selectedRequest.quantity_requested} {selectedRequest.unit}</div>
+                        <label className="text-xs font-medium text-gray-500">Department / College</label>
+                        <div className="text-sm mt-1">{selectedGroup.department}</div>
                       </div>
                       <div>
                         <label className="text-xs font-medium text-gray-500">Date Submitted</label>
-                        <div className="text-sm mt-1">{new Date(selectedRequest.created_at).toLocaleString()}</div>
+                        <div className="text-sm mt-1">{new Date(selectedGroup.created_at).toLocaleString()}</div>
+                      </div>
+
+                      {/* Items List */}
+                      <div>
+                        <label className="text-xs font-medium text-gray-500">Items Requested</label>
+                        <div className="mt-2 space-y-2">
+                          {selectedGroup.items.map((item, idx) => (
+                            <div key={idx} className="bg-gray-50 rounded-lg p-3">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium text-gray-900">{item.description}</span>
+                                <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded font-medium">
+                                  # {item.item_no}
+                                </span>
+                                <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded font-medium">
+                                  Qty: {item.quantity_requested} {item.unit}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -261,9 +366,65 @@ export function InboxPage() {
                   </div>
                 )}
               </div>
+
             </div>
           </div>
         </div>
+
+        {/* Delete Confirmation Modal */}
+        {showDeleteModal && groupToDelete && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-xl font-bold text-gray-900">Delete Request</h3>
+                <button
+                  onClick={() => { setShowDeleteModal(false); setGroupToDelete(null); }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                  <div>
+                    <div className="text-xs text-gray-500">Requested by</div>
+                    <div className="font-semibold text-gray-900">{groupToDelete.requested_by}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-2">Items to restore:</div>
+                    {groupToDelete.items.map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-sm py-1">
+                        <span className="text-gray-700">{item.description}</span>
+                        <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
+                          +{item.quantity_requested} {item.unit}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-gray-200 flex gap-3">
+                <button
+                  onClick={() => { setShowDeleteModal(false); setGroupToDelete(null); }}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleteLoading}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {deleteLoading ? "Deleting..." : "Confirm Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   );
