@@ -1,15 +1,15 @@
 import { useState, useEffect } from "react";
-import { 
-  PackageOpen, 
-  AlertTriangle, 
-  TrendingUp, 
+import {
+  PackageOpen,
+  AlertTriangle,
+  TrendingUp,
   ChevronRight,
   Search,
   Bell,
   LayoutDashboard,
   Inbox,
   BarChart3,
-  LogOut
+  LogOut,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { supabase } from "../../supabaseClient";
@@ -17,18 +17,46 @@ import { supabase } from "../../supabaseClient";
 export function Dashboard() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
-  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
-  const [isSidebarPinned, setIsSidebarPinned] = useState(false);
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const stored = localStorage.getItem("sidebarExpanded");
+    return stored ? JSON.parse(stored) : false;
+  });
+  const [isSidebarPinned, setIsSidebarPinned] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const stored = localStorage.getItem("sidebarPinned");
+    return stored ? JSON.parse(stored) : false;
+  });
   const [loading, setLoading] = useState(true);
 
   const [requests, setRequests] = useState<any[]>([]);
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [completedToday, setCompletedToday] = useState(0);
+  const [viewedRequests, setViewedRequests] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    const stored = localStorage.getItem("viewedRequests");
+    return new Set(stored ? JSON.parse(stored) : []);
+  });
 
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "viewedRequests",
+      JSON.stringify(Array.from(viewedRequests)),
+    );
+  }, [viewedRequests]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarExpanded", JSON.stringify(isSidebarExpanded));
+  }, [isSidebarExpanded]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarPinned", JSON.stringify(isSidebarPinned));
+  }, [isSidebarPinned]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -124,7 +152,7 @@ export function Dashboard() {
   // Group requests by request_group_id
   const getGroupedRequests = () => {
     const groups: Record<string, any[]> = {};
-    requests.forEach(req => {
+    requests.forEach((req) => {
       const key = req.request_group_id || req.pkid;
       if (!groups[key]) groups[key] = [];
       groups[key].push(req);
@@ -136,13 +164,35 @@ export function Dashboard() {
     }));
   };
 
-  const filteredGroups = getGroupedRequests().filter(({ first, groupItems }) =>
-    (first.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-    (first.department?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-    groupItems.some(item =>
-      (item.description?.toLowerCase() || "").includes(searchQuery.toLowerCase())
-    )
+  const filteredGroups = getGroupedRequests().filter(
+    ({ first, groupItems }) =>
+      (first.requested_by?.toLowerCase() || "").includes(
+        searchQuery.toLowerCase(),
+      ) ||
+      (first.department?.toLowerCase() || "").includes(
+        searchQuery.toLowerCase(),
+      ) ||
+      groupItems.some((item) =>
+        (item.description?.toLowerCase() || "").includes(
+          searchQuery.toLowerCase(),
+        ),
+      ),
   );
+
+  const isNewRequest = (createdAt: string) => {
+    const requestDate = new Date(createdAt);
+    const now = new Date();
+    const diffInHours =
+      (now.getTime() - requestDate.getTime()) / (1000 * 60 * 60);
+    return diffInHours < 24;
+  };
+
+  const handleRequestClick = (groupKey: string) => {
+    const newViewedRequests = new Set(viewedRequests);
+    newViewedRequests.add(groupKey);
+    setViewedRequests(newViewedRequests);
+    navigate("/admin/inbox", { state: { selectedGroupKey: groupKey } });
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -154,7 +204,9 @@ export function Dashboard() {
               <PackageOpen className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-gray-900">FacilityLink: Centralized Inventory System</h1>
+              <h1 className="font-bold text-gray-900">
+                FacilityLink: Centralized Inventory System
+              </h1>
               <p className="text-xs text-gray-500">Admin Portal</p>
             </div>
           </div>
@@ -171,7 +223,10 @@ export function Dashboard() {
       {/* Sidebar */}
       <aside
         onMouseEnter={() => !isSidebarPinned && setIsSidebarExpanded(true)}
-        onMouseLeave={() => !isSidebarPinned && setIsSidebarExpanded(false)}
+        onMouseLeave={() => {
+          setIsSidebarExpanded(false);
+          setIsSidebarPinned(false);
+        }}
         className={`fixed top-16 left-0 bottom-0 bg-white shadow-lg transition-all duration-300 z-20 ${
           isSidebarExpanded || isSidebarPinned ? "w-64" : "w-20"
         }`}
@@ -183,15 +238,25 @@ export function Dashboard() {
             return (
               <button
                 key={item.path}
-                onClick={() => { setIsSidebarPinned(true); setIsSidebarExpanded(true); navigate(item.path); }}
+                onClick={() => {
+                  setIsSidebarPinned(true);
+                  setIsSidebarExpanded(true);
+                  navigate(item.path);
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                  active ? "bg-[#4A89B0] text-white shadow-md" : "text-gray-700 hover:bg-gray-100"
+                  active
+                    ? "bg-[#4A89B0] text-white shadow-md"
+                    : "text-gray-700 hover:bg-gray-100"
                 }`}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
-                <span className={`font-medium whitespace-nowrap transition-opacity duration-300 ${
-                  isSidebarExpanded || isSidebarPinned ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-                }`}>
+                <span
+                  className={`font-medium whitespace-nowrap transition-opacity duration-300 ${
+                    isSidebarExpanded || isSidebarPinned
+                      ? "opacity-100"
+                      : "opacity-0 w-0 overflow-hidden"
+                  }`}
+                >
                   {item.label}
                 </span>
               </button>
@@ -201,31 +266,41 @@ export function Dashboard() {
       </aside>
 
       {/* Main Content */}
-      <main className={`pt-16 transition-all duration-300 ${
-        isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"
-      }`}>
+      <main
+        className={`pt-16 transition-all duration-300 ${
+          isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"
+        }`}
+      >
         <div className="p-4 lg:p-8">
           <div className="space-y-6">
-
             {/* Header */}
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-              <p className="text-gray-600 mt-1">Overview of your inventory management system</p>
+              <p className="text-gray-600 mt-1">
+                Overview of your inventory management system
+              </p>
             </div>
 
             {/* Stats Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {stats.map((stat) => {
                 const Icon = stat.icon;
                 return (
-                  <div key={stat.label} className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                  <div
+                    key={stat.label}
+                    className="bg-white rounded-xl shadow-sm p-6 border border-gray-100"
+                  >
                     <div className="flex items-center justify-between mb-4">
                       <div className={`${stat.color} p-3 rounded-lg`}>
                         <Icon className="w-6 h-6 text-white" />
                       </div>
                     </div>
-                    <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
-                    <div className="text-sm text-gray-600 mt-1">{stat.label}</div>
+                    <div className="text-2xl font-bold text-gray-900">
+                      {stat.value}
+                    </div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      {stat.label}
+                    </div>
                   </div>
                 );
               })}
@@ -233,14 +308,15 @@ export function Dashboard() {
 
             {/* Main Content Grid */}
             <div className="grid lg:grid-cols-3 gap-6">
-
               {/* Recent Requests */}
               <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100">
                 <div className="p-6 border-b border-gray-100">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
                       <Bell className="w-5 h-5 text-[#4A89B0]" />
-                      <h2 className="text-xl font-bold text-gray-900">Recent Requests</h2>
+                      <h2 className="text-xl font-bold text-gray-900">
+                        Recent Requests
+                      </h2>
                     </div>
                     <button
                       onClick={() => navigate("/admin/inbox")}
@@ -263,40 +339,64 @@ export function Dashboard() {
 
                 <div className="divide-y divide-gray-100">
                   {loading ? (
-                    <div className="p-8 text-center text-gray-400">Loading requests...</div>
+                    <div className="p-8 text-center text-gray-400">
+                      Loading requests...
+                    </div>
                   ) : filteredGroups.length === 0 ? (
-                    <div className="p-8 text-center text-gray-400">No requests found</div>
+                    <div className="p-8 text-center text-gray-400">
+                      No requests found
+                    </div>
                   ) : (
-                    filteredGroups.slice(0, 5).map(({ groupKey, groupItems, first }) => (
-                      <div
-                        key={groupKey}
-                        className="p-4 hover:bg-gray-50 cursor-pointer transition-colors"
-                        onClick={() => navigate("/admin/inbox")}
-                      >
-                        <div className="flex items-start gap-4">
-                          <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0 bg-blue-600" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-4 mb-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-gray-900">{first.requested_by}</span>
-                                <span className="text-xs text-gray-500">({first.department})</span>
+                    filteredGroups
+                      .slice(0, 5)
+                      .map(({ groupKey, groupItems, first }, index) => {
+                        const isNew =
+                          isNewRequest(first.created_at) &&
+                          !viewedRequests.has(groupKey);
+                        return (
+                          <div
+                            key={groupKey}
+                            className={`p-4 cursor-pointer transition-all border-l-4 hover:shadow-md ${
+                              isNew
+                                ? "border-l-yellow-400 bg-yellow-50 hover:bg-yellow-100"
+                                : index % 2 === 0
+                                  ? "border-l-transparent bg-white hover:bg-blue-50 hover:border-l-[#4A89B0]"
+                                  : "border-l-transparent bg-gray-50 hover:bg-blue-100 hover:border-l-[#4A89B0]"
+                            }`}
+                            onClick={() => handleRequestClick(groupKey)}
+                          >
+                            <div className="flex items-start gap-4">
+                              <div className="w-2 h-2 rounded-full mt-2 flex-shrink-0 bg-blue-600" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-start justify-between gap-4 mb-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-gray-900">
+                                      {first.requested_by}
+                                    </span>
+                                    <span className="text-xs text-gray-500">
+                                      ({first.department})
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-gray-500 whitespace-nowrap">
+                                    {new Date(
+                                      first.created_at,
+                                    ).toLocaleDateString()}
+                                  </span>
+                                </div>
+                                <div className="text-sm text-gray-700">
+                                  {groupItems.map((item, idx) => (
+                                    <span key={idx}>
+                                      {idx > 0 && " — "}
+                                      {item.description} (
+                                      {item.quantity_requested} {item.unit})
+                                    </span>
+                                  ))}
+                                </div>
                               </div>
-                              <span className="text-xs text-gray-500 whitespace-nowrap">
-                                {new Date(first.created_at).toLocaleDateString()}
-                              </span>
-                            </div>
-                            <div className="text-sm text-gray-700">
-                              {groupItems.map((item, idx) => (
-                                <span key={idx}>
-                                  {idx > 0 && " — "}
-                                  {item.description} ({item.quantity_requested} {item.unit})
-                                </span>
-                              ))}
                             </div>
                           </div>
-                        </div>
-                      </div>
-                    ))
+                        );
+                      })
                   )}
                 </div>
               </div>
@@ -307,7 +407,9 @@ export function Dashboard() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="w-5 h-5 text-red-600" />
-                      <h2 className="text-xl font-bold text-gray-900">Priority Items</h2>
+                      <h2 className="text-xl font-bold text-gray-900">
+                        Priority Items
+                      </h2>
                     </div>
                     <button
                       onClick={() => navigate("/admin/inventory")}
@@ -316,24 +418,40 @@ export function Dashboard() {
                       View All <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
-                  <p className="text-sm text-gray-600">Items with lowest stock levels</p>
+                  <p className="text-sm text-gray-600">
+                    Items with lowest stock levels
+                  </p>
                 </div>
 
                 <div className="p-4 space-y-3">
                   {loading ? (
-                    <div className="text-center text-gray-400 py-4">Loading...</div>
+                    <div className="text-center text-gray-400 py-4">
+                      Loading...
+                    </div>
                   ) : lowStockItems.length === 0 ? (
-                    <div className="text-center text-gray-400 py-4">All items are well stocked!</div>
+                    <div className="text-center text-gray-400 py-4">
+                      All items are well stocked!
+                    </div>
                   ) : (
                     lowStockItems.map((item, index) => {
                       const minimum = 10;
-                      const percentage = Math.min((item.remaining_stock / minimum) * 100, 100);
+                      const percentage = Math.min(
+                        (item.remaining_stock / minimum) * 100,
+                        100,
+                      );
                       return (
-                        <div key={index} className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                        <div
+                          key={index}
+                          className="p-3 bg-red-50 border border-red-100 rounded-lg"
+                        >
                           <div className="flex items-start justify-between mb-2">
                             <div className="flex-1">
-                              <div className="font-semibold text-gray-900 text-sm">{item.description}</div>
-                              <div className="text-xs text-gray-600">{item.item_no}</div>
+                              <div className="font-semibold text-gray-900 text-sm">
+                                {item.description}
+                              </div>
+                              <div className="text-xs text-gray-600">
+                                {item.item_no}
+                              </div>
                             </div>
                             <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
                               {item.remaining_stock} {item.unit}
@@ -347,7 +465,11 @@ export function Dashboard() {
                             <div className="w-full bg-gray-200 rounded-full h-2">
                               <div
                                 className={`h-2 rounded-full ${
-                                  percentage < 30 ? "bg-red-600" : percentage < 60 ? "bg-orange-500" : "bg-green-500"
+                                  percentage < 30
+                                    ? "bg-red-600"
+                                    : percentage < 60
+                                      ? "bg-orange-500"
+                                      : "bg-green-500"
                                 }`}
                                 style={{ width: `${percentage}%` }}
                               />
@@ -359,7 +481,6 @@ export function Dashboard() {
                   )}
                 </div>
               </div>
-
             </div>
           </div>
         </div>

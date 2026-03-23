@@ -332,79 +332,91 @@ export function UserRequestPage() {
   };
 
   const handleSubmitToSupabase = async () => {
-  setSubmitting(true);
+    setSubmitting(true);
 
-  try {
-    const department = personalInfo.userType === "faculty"
-      ? personalInfo.department
-      : personalInfo.college;
+    try {
+      const department =
+        personalInfo.userType === "faculty"
+          ? personalInfo.department
+          : personalInfo.college;
 
-    const facilityPrefix = personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
-    const groupId = crypto.randomUUID();
+      const facilityPrefix =
+        personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+      const groupId = crypto.randomUUID();
 
-    for (const item of items) {
-      // 1. Fetch inventory item
-      const { data: inventoryItem, error: fetchError } = await supabase
-        .from("inventory")
-        .select("item_no, description, unit, remaining_stock")
-        .eq("item_no", item.id)
-        .ilike("item_no", `${facilityPrefix}%`)
-        .single();
+      for (const item of items) {
+        // 1. Fetch inventory item
+        const { data: inventoryItem, error: fetchError } = await supabase
+          .from("inventory")
+          .select("item_no, description, unit, remaining_stock")
+          .eq("item_no", item.id)
+          .ilike("item_no", `${facilityPrefix}%`)
+          .single();
 
-      if (fetchError || !inventoryItem) {
-        toast.error(`Item ID "${item.id}" not found or not available for your account type.`);
-        setSubmitting(false);
-        return;
+        if (fetchError || !inventoryItem) {
+          toast.error(
+            `Item ID "${item.id}" not found or not available for your account type.`,
+          );
+          setSubmitting(false);
+          return;
+        }
+
+        // 2. Cross-check quantity against remaining stock
+        if (item.quantity > inventoryItem.remaining_stock) {
+          toast.error(
+            `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`,
+          );
+          setSubmitting(false);
+          return;
+        }
+
+        // 3. Insert request as "approved" immediately
+        const { error: insertError } = await supabase.from("requests").insert({
+          item_no: inventoryItem.item_no,
+          description: inventoryItem.description,
+          unit: inventoryItem.unit,
+          quantity_requested: item.quantity,
+          requested_by: personalInfo.fullName,
+          department: department,
+          status: "approved", // ← auto approved
+          request_group_id: groupId,
+        });
+
+        if (insertError) {
+          toast.error(
+            `Failed to submit request for: ${inventoryItem.description}`,
+          );
+          console.error(insertError);
+          setSubmitting(false);
+          return;
+        }
+
+        // 4. Subtract stock immediately
+        const { error: stockError } = await supabase
+          .from("inventory")
+          .update({
+            remaining_stock: inventoryItem.remaining_stock - item.quantity,
+          })
+          .eq("item_no", inventoryItem.item_no);
+
+        if (stockError) {
+          toast.error(
+            `Failed to update stock for: ${inventoryItem.description}`,
+          );
+          console.error(stockError);
+          setSubmitting(false);
+          return;
+        }
       }
 
-      // 2. Cross-check quantity against remaining stock
-      if (item.quantity > inventoryItem.remaining_stock) {
-        toast.error(`Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`);
-        setSubmitting(false);
-        return;
-      }
-
-      // 3. Insert request as "approved" immediately
-      const { error: insertError } = await supabase.from("requests").insert({
-        item_no: inventoryItem.item_no,
-        description: inventoryItem.description,
-        unit: inventoryItem.unit,
-        quantity_requested: item.quantity,
-        requested_by: personalInfo.fullName,
-        department: department,
-        status: "approved", // ← auto approved
-        request_group_id: groupId,
-      });
-
-      if (insertError) {
-        toast.error(`Failed to submit request for: ${inventoryItem.description}`);
-        console.error(insertError);
-        setSubmitting(false);
-        return;
-      }
-
-      // 4. Subtract stock immediately
-      const { error: stockError } = await supabase
-        .from("inventory")
-        .update({ remaining_stock: inventoryItem.remaining_stock - item.quantity })
-        .eq("item_no", inventoryItem.item_no);
-
-      if (stockError) {
-        toast.error(`Failed to update stock for: ${inventoryItem.description}`);
-        console.error(stockError);
-        setSubmitting(false);
-        return;
-      }
+      setCurrentStep(3);
+    } catch (error) {
+      toast.error("Something went wrong. Please try again.");
+      console.error(error);
+    } finally {
+      setSubmitting(false);
     }
-
-    setCurrentStep(3);
-  } catch (error) {
-    toast.error("Something went wrong. Please try again.");
-    console.error(error);
-  } finally {
-    setSubmitting(false);
-  }
-};
+  };
 
   const handleNextStep = () => {
     if (currentStep === 1 && validateStep1()) {
@@ -559,12 +571,16 @@ export function UserRequestPage() {
                     <input
                       type="text"
                       value={personalInfo.fullName}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const filtered = e.target.value.replace(
+                          /[^a-zA-Z\s]/g,
+                          "",
+                        );
                         setPersonalInfo({
                           ...personalInfo,
-                          fullName: e.target.value,
-                        })
-                      }
+                          fullName: filtered,
+                        });
+                      }}
                       className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                       placeholder="Enter your full name"
                     />
@@ -621,12 +637,16 @@ export function UserRequestPage() {
                     <input
                       type="text"
                       value={personalInfo.studentNumber}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const filtered = e.target.value.replace(
+                          /[^0-9\-\s]/g,
+                          "",
+                        );
                         setPersonalInfo({
                           ...personalInfo,
-                          studentNumber: e.target.value,
-                        })
-                      }
+                          studentNumber: filtered,
+                        });
+                      }}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                       placeholder="Enter your student number"
                     />
@@ -641,12 +661,16 @@ export function UserRequestPage() {
                     <input
                       type="text"
                       value={personalInfo.facultyId}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const filtered = e.target.value.replace(
+                          /[^0-9\-\s]/g,
+                          "",
+                        );
                         setPersonalInfo({
                           ...personalInfo,
-                          facultyId: e.target.value,
-                        })
-                      }
+                          facultyId: filtered,
+                        });
+                      }}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                       placeholder="Enter your phone number"
                     />
@@ -894,26 +918,31 @@ export function UserRequestPage() {
                         </td>
                         <td className="py-3 px-4">
                           <input
-                            type="number"
+                            type="text"
                             value={
                               item.id && item.itemDescription
-                                ? item.quantity
+                                ? item.quantity === 0
+                                  ? ""
+                                  : item.quantity
                                 : ""
                             }
-                            onChange={(e) =>
-                              handleItemChange(
-                                index,
-                                "quantity",
-                                parseInt(e.target.value) || 1,
-                              )
-                            }
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              const numValue = parseInt(value) || 0;
+                              handleItemChange(index, "quantity", numValue);
+                            }}
+                            onBlur={(e) => {
+                              const value = parseInt(e.target.value) || 0;
+                              if (value < 1) {
+                                handleItemChange(index, "quantity", 1);
+                              }
+                            }}
                             disabled={!item.id || !item.itemDescription}
                             className={`w-full px-3 py-2 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent ${
                               item.id && item.itemDescription
                                 ? "bg-green-100 border border-green-300 cursor-default"
                                 : "bg-gray-200 border border-gray-400 cursor-not-allowed text-gray-500"
                             }`}
-                            min="1"
                           />
                         </td>
                         <td className="py-3 px-4 text-center">

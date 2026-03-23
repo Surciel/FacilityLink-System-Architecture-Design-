@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
-import { 
-  Search, 
-  Filter, 
+import { useState, useEffect, useRef } from "react";
+import {
+  Search,
+  Filter,
   Clock,
   AlertCircle,
   Calendar,
@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useNavigate } from "react-router";
+import { useNavigate, useLocation } from "react-router";
 import { supabase } from "../../supabaseClient";
 
 interface Request {
@@ -41,19 +41,66 @@ interface GroupedRequest {
 
 export function InboxPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [groupedRequests, setGroupedRequests] = useState<GroupedRequest[]>([]);
-  const [selectedGroup, setSelectedGroup] = useState<GroupedRequest | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<GroupedRequest | null>(
+    null,
+  );
   const [searchQuery, setSearchQuery] = useState("");
-  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
-  const [isSidebarPinned, setIsSidebarPinned] = useState(false);
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const stored = localStorage.getItem("sidebarExpanded");
+    return stored ? JSON.parse(stored) : false;
+  });
+  const [isSidebarPinned, setIsSidebarPinned] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const stored = localStorage.getItem("sidebarPinned");
+    return stored ? JSON.parse(stored) : false;
+  });
   const [loading, setLoading] = useState(true);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [groupToDelete, setGroupToDelete] = useState<GroupedRequest | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<GroupedRequest | null>(
+    null,
+  );
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
     fetchRequests();
   }, []);
+
+  useEffect(() => {
+    if (!loading && groupedRequests.length > 0) {
+      const state = location.state as { selectedGroupKey?: string } | null;
+      if (state?.selectedGroupKey) {
+        const matchingGroup = groupedRequests.find(
+          (group) => group.group_id === state.selectedGroupKey,
+        );
+        if (matchingGroup) {
+          setSelectedGroup(matchingGroup);
+          // Scroll to the selected group
+          const selectedKey = state.selectedGroupKey;
+          setTimeout(() => {
+            const groupElement = groupRefs.current[selectedKey];
+            if (groupElement) {
+              groupElement.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+              });
+            }
+          }, 0);
+        }
+      }
+    }
+  }, [loading, groupedRequests, location.state]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarExpanded", JSON.stringify(isSidebarExpanded));
+  }, [isSidebarExpanded]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarPinned", JSON.stringify(isSidebarPinned));
+  }, [isSidebarPinned]);
 
   const fetchRequests = async () => {
     setLoading(true);
@@ -87,7 +134,8 @@ export function InboxPage() {
     });
 
     const sorted = Object.values(groups).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
 
     setGroupedRequests(sorted);
@@ -113,7 +161,10 @@ export function InboxPage() {
 
       const { error: restoreError } = await supabase
         .from("inventory")
-        .update({ remaining_stock: inventoryItem.remaining_stock + item.quantity_requested })
+        .update({
+          remaining_stock:
+            inventoryItem.remaining_stock + item.quantity_requested,
+        })
         .eq("item_no", item.item_no);
 
       if (restoreError) {
@@ -142,10 +193,19 @@ export function InboxPage() {
     setDeleteLoading(false);
   };
 
-  const filteredGroups = groupedRequests.filter(group =>
-    (group.requested_by?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-    (group.department?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
-    group.items.some(i => (i.description?.toLowerCase() || "").includes(searchQuery.toLowerCase()))
+  const filteredGroups = groupedRequests.filter(
+    (group) =>
+      (group.requested_by?.toLowerCase() || "").includes(
+        searchQuery.toLowerCase(),
+      ) ||
+      (group.department?.toLowerCase() || "").includes(
+        searchQuery.toLowerCase(),
+      ) ||
+      group.items.some((i) =>
+        (i.description?.toLowerCase() || "").includes(
+          searchQuery.toLowerCase(),
+        ),
+      ),
   );
 
   const menuItems = [
@@ -167,7 +227,9 @@ export function InboxPage() {
               <PackageOpen className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-gray-900">FacilityLink: Centralized Inventory System</h1>
+              <h1 className="font-bold text-gray-900">
+                FacilityLink: Centralized Inventory System
+              </h1>
               <p className="text-xs text-gray-500">Admin Portal</p>
             </div>
           </div>
@@ -184,7 +246,10 @@ export function InboxPage() {
       {/* Sidebar */}
       <aside
         onMouseEnter={() => !isSidebarPinned && setIsSidebarExpanded(true)}
-        onMouseLeave={() => !isSidebarPinned && setIsSidebarExpanded(false)}
+        onMouseLeave={() => {
+          setIsSidebarExpanded(false);
+          setIsSidebarPinned(false);
+        }}
         className={`fixed top-16 left-0 bottom-0 bg-white shadow-lg transition-all duration-300 z-20 ${
           isSidebarExpanded || isSidebarPinned ? "w-64" : "w-20"
         }`}
@@ -196,15 +261,25 @@ export function InboxPage() {
             return (
               <button
                 key={item.path}
-                onClick={() => { setIsSidebarPinned(true); setIsSidebarExpanded(true); navigate(item.path); }}
+                onClick={() => {
+                  setIsSidebarPinned(true);
+                  setIsSidebarExpanded(true);
+                  navigate(item.path);
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                  active ? "bg-[#4A89B0] text-white shadow-md" : "text-gray-700 hover:bg-gray-100"
+                  active
+                    ? "bg-[#4A89B0] text-white shadow-md"
+                    : "text-gray-700 hover:bg-gray-100"
                 }`}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
-                <span className={`font-medium whitespace-nowrap transition-opacity duration-300 ${
-                  isSidebarExpanded || isSidebarPinned ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-                }`}>
+                <span
+                  className={`font-medium whitespace-nowrap transition-opacity duration-300 ${
+                    isSidebarExpanded || isSidebarPinned
+                      ? "opacity-100"
+                      : "opacity-0 w-0 overflow-hidden"
+                  }`}
+                >
                   {item.label}
                 </span>
               </button>
@@ -214,12 +289,13 @@ export function InboxPage() {
       </aside>
 
       {/* Main Content */}
-      <main className={`pt-16 transition-all duration-300 ${
-        isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"
-      }`}>
+      <main
+        className={`pt-16 transition-all duration-300 ${
+          isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"
+        }`}
+      >
         <div className="p-4 lg:p-8">
           <div className="space-y-6">
-
             {/* Header */}
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Requests</h1>
@@ -230,7 +306,9 @@ export function InboxPage() {
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <div className="grid grid-cols-1 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Search
+                  </label>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input
@@ -245,13 +323,15 @@ export function InboxPage() {
               </div>
               <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
                 <Filter className="w-4 h-4" />
-                <span>Showing {filteredGroups.length} of {groupedRequests.length} requests</span>
+                <span>
+                  Showing {filteredGroups.length} of {groupedRequests.length}{" "}
+                  requests
+                </span>
               </div>
             </div>
 
             {/* Request List + Detail */}
             <div className="grid lg:grid-cols-3 gap-6">
-
               {/* List */}
               <div className="lg:col-span-2 space-y-3">
                 {loading ? (
@@ -267,17 +347,26 @@ export function InboxPage() {
                   filteredGroups.map((group) => (
                     <div
                       key={group.group_id}
+                      ref={(el) => {
+                        if (el) groupRefs.current[group.group_id] = el;
+                      }}
                       onClick={() => setSelectedGroup(group)}
                       className={`bg-white rounded-lg shadow-sm border border-gray-200 cursor-pointer transition-all hover:shadow-md ${
-                        selectedGroup?.group_id === group.group_id ? "ring-2 ring-[#4A89B0]" : ""
+                        selectedGroup?.group_id === group.group_id
+                          ? "ring-2 ring-[#4A89B0]"
+                          : ""
                       }`}
                     >
                       <div className="p-5">
                         <div className="flex items-start justify-between mb-3">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-semibold text-gray-900">{group.requested_by}</h3>
-                              <span className="text-xs text-gray-500">({group.department})</span>
+                              <h3 className="font-semibold text-gray-900">
+                                {group.requested_by}
+                              </h3>
+                              <span className="text-xs text-gray-500">
+                                ({group.department})
+                              </span>
                             </div>
                             <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
                               <Calendar className="w-3 h-3" />
@@ -286,7 +375,8 @@ export function InboxPage() {
                           </div>
                           <div className="flex flex-col items-end gap-2">
                             <span className="text-xs text-gray-500">
-                              {group.items.length} item{group.items.length > 1 ? "s" : ""}
+                              {group.items.length} item
+                              {group.items.length > 1 ? "s" : ""}
                             </span>
                             <button
                               onClick={(e) => {
@@ -303,10 +393,17 @@ export function InboxPage() {
                         </div>
 
                         <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                          <div className="text-sm font-medium text-gray-700">Requested Items:</div>
+                          <div className="text-sm font-medium text-gray-700">
+                            Requested Items:
+                          </div>
                           {group.items.map((item, idx) => (
-                            <div key={idx} className="flex items-center justify-between text-sm">
-                              <span className="text-gray-700">{item.description}</span>
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between text-sm"
+                            >
+                              <span className="text-gray-700">
+                                {item.description}
+                              </span>
                               <span className="bg-[#4A89B0] text-white px-2 py-0.5 rounded text-xs font-medium">
                                 × {item.quantity_requested} {item.unit}
                               </span>
@@ -323,29 +420,50 @@ export function InboxPage() {
               <div className="lg:col-span-1">
                 {selectedGroup ? (
                   <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto">
-                    <h3 className="text-xl font-bold text-gray-900 mb-4">Request Details</h3>
+                    <h3 className="text-xl font-bold text-gray-900 mb-4">
+                      Request Details
+                    </h3>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Requested By</label>
-                        <div className="text-sm mt-1">{selectedGroup.requested_by}</div>
+                        <label className="text-xs font-medium text-gray-500">
+                          Requested By
+                        </label>
+                        <div className="text-sm mt-1">
+                          {selectedGroup.requested_by}
+                        </div>
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Department / College</label>
-                        <div className="text-sm mt-1">{selectedGroup.department}</div>
+                        <label className="text-xs font-medium text-gray-500">
+                          Department / College
+                        </label>
+                        <div className="text-sm mt-1">
+                          {selectedGroup.department}
+                        </div>
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Date Submitted</label>
-                        <div className="text-sm mt-1">{new Date(selectedGroup.created_at).toLocaleString()}</div>
+                        <label className="text-xs font-medium text-gray-500">
+                          Date Submitted
+                        </label>
+                        <div className="text-sm mt-1">
+                          {new Date(selectedGroup.created_at).toLocaleString()}
+                        </div>
                       </div>
 
                       {/* Items List */}
                       <div>
-                        <label className="text-xs font-medium text-gray-500">Items Requested</label>
+                        <label className="text-xs font-medium text-gray-500">
+                          Items Requested
+                        </label>
                         <div className="mt-2 space-y-2">
                           {selectedGroup.items.map((item, idx) => (
-                            <div key={idx} className="bg-gray-50 rounded-lg p-3">
+                            <div
+                              key={idx}
+                              className="bg-gray-50 rounded-lg p-3"
+                            >
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-medium text-gray-900">{item.description}</span>
+                                <span className="text-sm font-medium text-gray-900">
+                                  {item.description}
+                                </span>
                                 <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded font-medium">
                                   # {item.item_no}
                                 </span>
@@ -362,11 +480,12 @@ export function InboxPage() {
                 ) : (
                   <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center sticky top-24">
                     <Clock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-600">Select a request to view details</p>
+                    <p className="text-gray-600">
+                      Select a request to view details
+                    </p>
                   </div>
                 )}
               </div>
-
             </div>
           </div>
         </div>
@@ -376,9 +495,14 @@ export function InboxPage() {
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
               <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                <h3 className="text-xl font-bold text-gray-900">Delete Request</h3>
+                <h3 className="text-xl font-bold text-gray-900">
+                  Delete Request
+                </h3>
                 <button
-                  onClick={() => { setShowDeleteModal(false); setGroupToDelete(null); }}
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setGroupToDelete(null);
+                  }}
                   className="text-gray-400 hover:text-gray-600"
                 >
                   <X className="w-6 h-6" />
@@ -389,13 +513,22 @@ export function InboxPage() {
                 <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                   <div>
                     <div className="text-xs text-gray-500">Requested by</div>
-                    <div className="font-semibold text-gray-900">{groupToDelete.requested_by}</div>
+                    <div className="font-semibold text-gray-900">
+                      {groupToDelete.requested_by}
+                    </div>
                   </div>
                   <div>
-                    <div className="text-xs text-gray-500 mb-2">Items to restore:</div>
+                    <div className="text-xs text-gray-500 mb-2">
+                      Items to restore:
+                    </div>
                     {groupToDelete.items.map((item, idx) => (
-                      <div key={idx} className="flex items-center justify-between text-sm py-1">
-                        <span className="text-gray-700">{item.description}</span>
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between text-sm py-1"
+                      >
+                        <span className="text-gray-700">
+                          {item.description}
+                        </span>
                         <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
                           +{item.quantity_requested} {item.unit}
                         </span>
@@ -407,7 +540,10 @@ export function InboxPage() {
 
               <div className="p-6 border-t border-gray-200 flex gap-3">
                 <button
-                  onClick={() => { setShowDeleteModal(false); setGroupToDelete(null); }}
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setGroupToDelete(null);
+                  }}
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
@@ -424,7 +560,6 @@ export function InboxPage() {
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
