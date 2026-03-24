@@ -118,19 +118,6 @@ export function AdminLogin() {
                 Sign In
               </button>
             </form>
-
-            {/* Demo Credentials Info */}
-            <div className="mt-6 p-4 bg-blue-50 border border-[#8B91A7]/30 rounded-lg">
-              <p className="text-sm text-[#1E3A5F] font-medium mb-1">
-                Demo Credentials:
-              </p>
-              <p className="text-xs text-gray-700">
-                Username: <span className="font-mono">admin</span>
-              </p>
-              <p className="text-xs text-gray-700">
-                Password: <span className="font-mono">admin123</span>
-              </p>
-            </div>
           </div>
         </div>
 
