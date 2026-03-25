@@ -167,33 +167,94 @@ export function AnalyticsPage() {
   };
 
   const fetchMonthlyTrend = async () => {
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const { data } = await supabase
-      .from("requests")
-      .select("created_at, quantity_requested")
-      .gte("created_at", sixMonthsAgo.toISOString());
-    const months = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
+    const now = new Date();
+    const currentMonthIndex = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    const fullMonths = [
+      "January",
+      "February",
+      "March",
+      "April",
       "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
     ];
-    const grouped: Record<string, any> = {};
-    (data || []).forEach((row) => {
-      const month = months[new Date(row.created_at).getMonth()];
-      if (!grouped[month]) grouped[month] = { month, items: 0 };
-      grouped[month].items += row.quantity_requested || 0;
+
+    const monthlyData: Record<string, number> = {};
+
+    // Fetch all inventory_history data at once for efficiency
+    const { data: allHistoryData } = await supabase
+      .from("inventory_history")
+      .select("*");
+
+    // Create a map of period_label to total_qty_issued sum
+    const historyByPeriod: Record<string, number> = {};
+    (allHistoryData || []).forEach((row) => {
+      const label = row.period_label;
+      if (label) {
+        historyByPeriod[label] =
+          (historyByPeriod[label] || 0) + (row.total_qty_issued || 0);
+      }
     });
-    setMonthlyTrendData(Object.values(grouped));
+
+    // Get data for the last 6 months (or back to January of current year, whichever is shorter)
+    for (let i = 0; i < 6; i++) {
+      const date = new Date(currentYear, currentMonthIndex, 1);
+      date.setMonth(date.getMonth() - i);
+      const monthIndex = date.getMonth();
+      const year = date.getFullYear();
+
+      // Stop if we go back to previous year
+      if (year < currentYear) {
+        break;
+      }
+
+      const monthName = fullMonths[monthIndex];
+      const displayKey = `${monthName} ${year}`;
+
+      if (monthIndex === currentMonthIndex && year === currentYear) {
+        // Current month: fetch from requests table
+        const firstDay = new Date(year, monthIndex, 1);
+        const lastDay = new Date(year, monthIndex + 1, 0);
+        const { data } = await supabase
+          .from("requests")
+          .select("quantity_requested")
+          .gte("created_at", firstDay.toISOString())
+          .lte("created_at", lastDay.toISOString());
+
+        const total = (data || []).reduce(
+          (sum, row) => sum + (row.quantity_requested || 0),
+          0,
+        );
+        monthlyData[displayKey] = total;
+      } else {
+        // Previous months: use pre-fetched inventory_history data
+        // Match the format: "January 1 to 31, 2026"
+        const firstDay = new Date(year, monthIndex, 1);
+        const lastDay = new Date(year, monthIndex + 1, 0);
+        const periodLabel = `${monthName} ${firstDay.getDate()} to ${lastDay.getDate()}, ${year}`;
+        monthlyData[displayKey] = historyByPeriod[periodLabel] || 0;
+      }
+    }
+
+    // Convert to array and reverse for chronological order (oldest first)
+    const trendData = Object.entries(monthlyData)
+      .reverse()
+      .map(([month]) => {
+        const [monthName] = month.split(" ");
+        return {
+          month: monthName,
+          items: monthlyData[month],
+        };
+      });
+
+    setMonthlyTrendData(trendData);
   };
 
   const fetchTopRequestedItems = async () => {
@@ -210,9 +271,11 @@ export function AnalyticsPage() {
       const month = new Date(row.created_at).getMonth();
       const name = row.description || "Unknown";
       if (month === thisMonth)
-        thisMonthCounts[name] = (thisMonthCounts[name] || 0) + 1;
+        thisMonthCounts[name] =
+          (thisMonthCounts[name] || 0) + (row.quantity_requested || 0);
       if (month === lastMonth)
-        lastMonthCounts[name] = (lastMonthCounts[name] || 0) + 1;
+        lastMonthCounts[name] =
+          (lastMonthCounts[name] || 0) + (row.quantity_requested || 0);
     });
 
     setTopRequestedItems(
@@ -240,17 +303,22 @@ export function AnalyticsPage() {
       "#8b5cf6",
       "#ec4899",
     ];
-    const total = Object.values(thisMonthCounts).reduce((a, b) => a + b, 0);
+
+    // Get top 6 items first, then calculate percentages based only on those items
+    const topSix = Object.entries(thisMonthCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+
+    const topSixTotal = topSix.reduce((sum, [_, count]) => sum + count, 0);
+
     setCategoryDistribution(
-      Object.entries(thisMonthCounts)
-        .slice(0, 6)
-        .map(([name, count], i) => ({
-          fullName: name,
-          name: shortenItemName(name, 18),
-          value: total > 0 ? Math.round((count / total) * 100) : 0,
-          count: count,
-          color: colors[i % colors.length],
-        })),
+      topSix.map(([name, count], i) => ({
+        fullName: name,
+        name: shortenItemName(name, 18),
+        value: topSixTotal > 0 ? Math.round((count / topSixTotal) * 100) : 0,
+        count: count,
+        color: colors[i % colors.length],
+      })),
     );
   };
 
@@ -295,12 +363,15 @@ export function AnalyticsPage() {
     });
 
     setAvailableMonths(uniqueMonths);
-    if (uniqueMonths.length > 0 && !uniqueMonths.includes(risMonthOption)) {
-      setRisMonthOption(uniqueMonths[0]);
+    if (uniqueMonths.length > 0) {
+      if (!uniqueMonths.includes(risMonthOption)) {
+        setRisMonthOption(uniqueMonths[0]);
+      }
+      if (!uniqueMonths.includes(ssmiMonthOption)) {
+        setSsmiMonthOption(uniqueMonths[0]);
+      }
     }
   };
-
-  const getMonthOptions = () => fullMonths.map((month) => `${month} 2026`);
 
   // --- PDF GENERATION ---
 
@@ -309,229 +380,216 @@ export function AnalyticsPage() {
     const prefix = reportFacility === "JMS" ? "JMS" : "GYM-S";
 
     try {
-      const [fullMonthName, yearStr] = ssmiMonthOption.split(" ");
-      const monthIndex = monthNameToIndex[fullMonthName];
-      const yearVal = parseInt(yearStr);
-      const firstDay = new Date(yearVal, monthIndex, 1);
-      const lastDay = new Date(yearVal, monthIndex + 1, 0);
-      const fetchStart = getLocalISODate(firstDay);
-      const fetchEnd = getLocalISODate(lastDay);
+      const isHistoricalMonth = availableMonths.includes(ssmiMonthOption);
 
-      const { data: allRequests } = await supabase
-        .from("requests")
-        .select("*")
-        .gte("created_at", `${fetchStart}T00:00:00`)
-        .lte("created_at", `${fetchEnd}T23:59:59`)
-        .ilike("item_no", `${prefix}%`);
-      const { data: inventoryItems } = await supabase
-        .from("inventory")
-        .select("*")
-        .ilike("item_no", `${prefix}%`)
-        .order("item_no", { ascending: true });
+      if (isHistoricalMonth) {
+        // Fetch from inventory_history for selected month
+        const { data: historyItems } = await supabase
+          .from("inventory_history")
+          .select("*")
+          .ilike("item_no", `${prefix}%`)
+          .eq("period_label", ssmiMonthOption)
+          .order("item_no", { ascending: true });
 
-      if (!inventoryItems || inventoryItems.length === 0) {
-        toast.error(`No items found for ${reportFacility}`);
-        setGenerating(null);
-        return;
-      }
+        if (!historyItems || historyItems.length === 0) {
+          toast.error(`No data found for ${ssmiMonthOption}`);
+          setGenerating(null);
+          return;
+        }
 
-      const requestStats: Record<string, any> = {};
-      (allRequests || []).forEach((req) => {
-        const d = new Date(req.created_at).getDate();
-        if (!requestStats[req.item_no])
-          requestStats[req.item_no] = {
-            w1: 0,
-            w2: 0,
-            w3: 0,
-            w4: 0,
-            totalQty: 0,
-          };
-        if (d <= 8) requestStats[req.item_no].w1 += req.quantity_requested;
-        else if (d <= 15)
-          requestStats[req.item_no].w2 += req.quantity_requested;
-        else if (d <= 22)
-          requestStats[req.item_no].w3 += req.quantity_requested;
-        else requestStats[req.item_no].w4 += req.quantity_requested;
-        requestStats[req.item_no].totalQty += req.quantity_requested;
-      });
+        // Parse the month and year from period_label (e.g., "January 1 to 31, 2026")
+        const parts = ssmiMonthOption.split(" ");
+        const monthName = parts[0];
+        const yearStr = parts[parts.length - 1];
+        const monthIndex = monthNameToIndex[monthName];
+        const year = parseInt(yearStr);
+        const lastDay = new Date(year, monthIndex + 1, 0);
 
-      const bodyData = inventoryItems.map((item) => {
-        const stats = requestStats[item.item_no] || {
-          w1: 0,
-          w2: 0,
-          w3: 0,
-          w4: 0,
-          totalQty: 0,
-        };
-        const unitCost = item.unit_cost || 0;
-        const totalCost = stats.totalQty * unitCost;
+        const bodyData = historyItems.map((item) => {
+          const w1 = item.week1 || 0;
+          const w2 = item.week2 || 0;
+          const w3 = item.week3 || 0;
+          const w4 = item.week4 || 0;
+          const totalQty = item.total_qty_issued || 0;
+          const stockOnHand = item.stock_on_hand || 0;
+          const unitCost = item.unit_cost || 0;
+          const totalCost = totalQty * unitCost;
+          const balanceOnHand = stockOnHand - totalQty;
 
-        return [
-          item.item_no || "",
-          item.description || "",
-          item.unit || "",
-          item.remaining_stock + stats.totalQty,
-          stats.w1 || "",
-          stats.w2 || "",
-          stats.w3 || "",
-          stats.w4 || "",
-          "",
-          stats.totalQty || 0,
-          unitCost > 0 ? unitCost.toFixed(2) : "",
-          totalCost > 0 ? totalCost.toFixed(2) : "",
-          item.remaining_stock,
-        ];
-      });
-
-      const doc = new jsPDF("landscape");
-      doc.setFont("times");
-      const pageWidth = doc.internal.pageSize.width;
-
-      doc
-        .setFontSize(12)
-        .text("Pamantasan ng Lungsod ng Maynila", pageWidth / 2, 12, {
-          align: "center",
+          return [
+            item.item_no || "",
+            item.item_description || "",
+            item.unit || "",
+            stockOnHand,
+            w1 || "",
+            w2 || "",
+            w3 || "",
+            w4 || "",
+            "",
+            totalQty || 0,
+            unitCost > 0 ? unitCost.toFixed(2) : "",
+            totalCost > 0 ? totalCost.toFixed(2) : "",
+            balanceOnHand,
+          ];
         });
-      doc
-        .setFont("times", "bold")
-        .setFontSize(11)
-        .text("SUMMARY OF SUPPLIES AND MATERIALS ISSUED", pageWidth / 2, 18, {
-          align: "center",
-        });
-      doc
-        .setFont("times", "normal")
-        .text("General Services Office", pageWidth / 2, 24, {
-          align: "center",
-        });
-      doc
-        .setFontSize(10)
-        .text(`For the Period: ${fetchStart} to ${fetchEnd}`, 15, 32);
-      doc.text(`No. GS0${prefix}-${yearStr}-02`, pageWidth - 15, 32, {
-        align: "right",
-      });
 
-      const m = lastDay
-        .toLocaleString("default", { month: "short" })
-        .toUpperCase();
+        const doc = new jsPDF("landscape");
+        doc.setFont("times");
+        const pageWidth = doc.internal.pageSize.width;
 
-      // Main Table Config
-      autoTable(doc, {
-        head: [
-          [
-            { content: "Item No.", rowSpan: 3 },
-            { content: "Item Description", rowSpan: 3 },
-            { content: "Unit", rowSpan: 3 },
-            { content: "Stock Hand", rowSpan: 3 },
-            {
-              content:
-                "Requisition and Issue Slip Numbers Used for Other Supplies Quantity Issued",
-              colSpan: 5,
-            },
-            { content: "Total Qty Issued", rowSpan: 3 },
-            { content: "Unit Cost\n(PhP)", rowSpan: 3 },
-            { content: "Total Cost\n(PhP)", rowSpan: 3 },
-            { content: "Balance on\nHand", rowSpan: 3 },
-          ],
-          [
-            { content: `1-8 ${m}` },
-            { content: `9-15 ${m}` },
-            { content: `16-22 ${m}` },
-            { content: `23-${lastDay.getDate()} ${m}` },
-            { content: "DELIVERY", rowSpan: 2 },
-          ],
-          ["1", "2", "3", "4"],
-        ],
-        body: bodyData,
-        // Single unified row for TOTAL AMOUNT
-        foot: [
-          [
-            {
-              content: `TOTAL AMOUNT ${" . ".repeat(180)}`,
-              colSpan: 13,
-              styles: {
-                halign: "left",
-                fontStyle: "bold",
-                overflow: "hidden",
-                fillColor: [255, 255, 255],
-                textColor: [0, 0, 0],
-                lineWidth: 0.1,
-                lineColor: [0, 0, 0],
+        const fetchStart = `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+        const fetchEnd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${lastDay.getDate()}`;
+
+        doc
+          .setFontSize(12)
+          .text("Pamantasan ng Lungsod ng Maynila", pageWidth / 2, 12, {
+            align: "center",
+          });
+        doc
+          .setFont("times", "bold")
+          .setFontSize(11)
+          .text("SUMMARY OF SUPPLIES AND MATERIALS ISSUED", pageWidth / 2, 18, {
+            align: "center",
+          });
+        doc
+          .setFont("times", "normal")
+          .text("General Services Office", pageWidth / 2, 24, {
+            align: "center",
+          });
+        doc
+          .setFontSize(10)
+          .text(`For the Period: ${fetchStart} to ${fetchEnd}`, 15, 32);
+        doc.text(`No. GS0${prefix}-${year}-02`, pageWidth - 15, 32, {
+          align: "right",
+        });
+
+        const m = lastDay
+          .toLocaleString("default", { month: "short" })
+          .toUpperCase();
+
+        // Main Table Config
+        autoTable(doc, {
+          head: [
+            [
+              { content: "Item No.", rowSpan: 3 },
+              { content: "Item Description", rowSpan: 3 },
+              { content: "Unit", rowSpan: 3 },
+              { content: "Stock Hand", rowSpan: 3 },
+              {
+                content:
+                  "Requisition and Issue Slip Numbers Used for Other Supplies Quantity Issued",
+                colSpan: 5,
               },
-            },
+              { content: "Total Qty Issued", rowSpan: 3 },
+              { content: "Unit Cost\n(PhP)", rowSpan: 3 },
+              { content: "Total Cost\n(PhP)", rowSpan: 3 },
+              { content: "Balance on\nHand", rowSpan: 3 },
+            ],
+            [
+              { content: `1-8 ${m}` },
+              { content: `9-15 ${m}` },
+              { content: `16-22 ${m}` },
+              { content: `23-${lastDay.getDate()} ${m}` },
+              { content: "DELIVERY", rowSpan: 2 },
+            ],
+            ["1", "2", "3", "4"],
           ],
-        ],
-        showFoot: "lastPage",
-        startY: 36,
-        theme: "grid",
-        styles: {
-          fontSize: 8,
-          font: "times",
-          lineColor: [0, 0, 0],
-          lineWidth: 0.1,
-          textColor: [0, 0, 0],
-          cellPadding: { top: 1, bottom: 1, left: 1.5, right: 1.5 },
-        },
-        headStyles: {
-          fillColor: [255, 255, 255],
-          halign: "center",
-          valign: "middle",
-          fontStyle: "bold",
-        },
-        columnStyles: {
-          0: { cellWidth: 24, halign: "center" },
-          1: { cellWidth: 62 },
-          2: { halign: "center" },
-          3: { halign: "center" },
-          4: { halign: "center" },
-          5: { halign: "center" },
-          6: { halign: "center" },
-          7: { halign: "center" },
-          8: { halign: "center" },
-          9: { halign: "center" },
-          10: { halign: "right" },
-          11: { halign: "right" },
-          12: { cellWidth: 25, halign: "center" },
-        },
-      });
-
-      // ---- Perfectly Sealed Signature Block ----
-      autoTable(doc, {
-        startY: (doc as any).lastAutoTable.finalY,
-        theme: "grid",
-        styles: {
-          fontSize: 9,
-          font: "times",
-          lineColor: [0, 0, 0],
-          lineWidth: 0.1,
-          textColor: [0, 0, 0],
-          cellPadding: 4,
-        },
-        body: [
-          [
-            {
-              content:
-                "Prepared by:\n\n\nGRACIANO B. MONTIADORA\nStore keeper I",
-              styles: { halign: "left" },
-            },
-            {
-              content: "Noted by:\n\n\nEMILY E. ESPERO\nChief, GSO",
-              styles: { halign: "left" },
-            },
-            {
-              content:
-                "Posted in the SLC by:\n\n\nMA. ELVIRA B. SALAMAT\nAdministrative Assistant I",
-              styles: { halign: "left" },
-            },
+          body: bodyData,
+          foot: [
+            [
+              {
+                content: `TOTAL AMOUNT ${" . ".repeat(180)}`,
+                colSpan: 13,
+                styles: {
+                  halign: "left",
+                  fontStyle: "bold",
+                  overflow: "hidden",
+                  fillColor: [255, 255, 255],
+                  textColor: [0, 0, 0],
+                  lineWidth: 0.1,
+                  lineColor: [0, 0, 0],
+                },
+              },
+            ],
           ],
-        ],
-      });
+          showFoot: "lastPage",
+          startY: 36,
+          theme: "grid",
+          styles: {
+            fontSize: 8,
+            font: "times",
+            lineColor: [0, 0, 0],
+            lineWidth: 0.1,
+            textColor: [0, 0, 0],
+            cellPadding: { top: 1, bottom: 1, left: 1.5, right: 1.5 },
+          },
+          headStyles: {
+            fillColor: [255, 255, 255],
+            halign: "center",
+            valign: "middle",
+            fontStyle: "bold",
+          },
+          columnStyles: {
+            0: { cellWidth: 24, halign: "center" },
+            1: { cellWidth: 62 },
+            2: { halign: "center" },
+            3: { halign: "center" },
+            4: { halign: "center" },
+            5: { halign: "center" },
+            6: { halign: "center" },
+            7: { halign: "center" },
+            8: { halign: "center" },
+            9: { halign: "center" },
+            10: { halign: "right" },
+            11: { halign: "right" },
+            12: { cellWidth: 25, halign: "center" },
+          },
+        });
 
-      doc.save(
-        `SSMI_${reportFacility}_${ssmiMonthOption.replace(" ", "_")}.pdf`,
-      );
-      toast.success("SSMI Report Downloaded!");
+        // ---- Perfectly Sealed Signature Block ----
+        autoTable(doc, {
+          startY: (doc as any).lastAutoTable.finalY,
+          theme: "grid",
+          styles: {
+            fontSize: 9,
+            font: "times",
+            lineColor: [0, 0, 0],
+            lineWidth: 0.1,
+            textColor: [0, 0, 0],
+            cellPadding: 4,
+          },
+          body: [
+            [
+              {
+                content:
+                  "Prepared by:\n\n\nGRACIANO B. MONTIADORA\nStore keeper I",
+                styles: { halign: "left" },
+              },
+              {
+                content: "Noted by:\n\n\nEMILY E. ESPERO\nChief, GSO",
+                styles: { halign: "left" },
+              },
+              {
+                content:
+                  "Posted in the SLC by:\n\n\nMA. ELVIRA B. SALAMAT\nAdministrative Assistant I",
+                styles: { halign: "left" },
+              },
+            ],
+          ],
+        });
+
+        doc.save(
+          `SSMI_${reportFacility}_${ssmiMonthOption.replace(" ", "_")}.pdf`,
+        );
+        toast.success("SSMI Report Downloaded!");
+      } else {
+        toast.error(
+          `Month ${ssmiMonthOption} not found in inventory history. Please select a valid month.`,
+        );
+      }
     } catch (err) {
       toast.error("Failed to generate report.");
+      console.error(err);
     } finally {
       setGenerating(null);
     }
@@ -1156,7 +1214,7 @@ export function AnalyticsPage() {
                       onChange={(e) => setSsmiMonthOption(e.target.value)}
                       className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
                     >
-                      {getMonthOptions().map((opt) => (
+                      {availableMonths.map((opt) => (
                         <option key={opt} value={opt}>
                           {opt}
                         </option>
