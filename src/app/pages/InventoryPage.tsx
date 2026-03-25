@@ -37,6 +37,16 @@ export function InventoryPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [stockFilter, setStockFilter] = useState("all");
+  const [sortOption, setSortOption] = useState<
+    | "name-az"
+    | "name-za"
+    | "unit-az"
+    | "unit-za"
+    | "stock-high"
+    | "stock-low"
+    | "id-az"
+    | "id-za"
+  >("name-az");
   const [showRestockModal, setShowRestockModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [restockAmount, setRestockAmount] = useState("");
@@ -328,6 +338,43 @@ export function InventoryPage() {
 
   const handleLogout = () => navigate("/admin/login");
 
+  const getSortedInventory = (items: InventoryItem[]) => {
+    const sorted = [...items];
+
+    switch (sortOption) {
+      case "name-az":
+        return sorted.sort((a, b) =>
+          (a.description || "").localeCompare(b.description || ""),
+        );
+      case "name-za":
+        return sorted.sort((a, b) =>
+          (b.description || "").localeCompare(a.description || ""),
+        );
+      case "unit-az":
+        return sorted.sort((a, b) =>
+          (a.unit || "").localeCompare(b.unit || ""),
+        );
+      case "unit-za":
+        return sorted.sort((a, b) =>
+          (b.unit || "").localeCompare(a.unit || ""),
+        );
+      case "stock-high":
+        return sorted.sort((a, b) => b.remaining_stock - a.remaining_stock);
+      case "stock-low":
+        return sorted.sort((a, b) => a.remaining_stock - b.remaining_stock);
+      case "id-az":
+        return sorted.sort((a, b) =>
+          (a.item_no || "").localeCompare(b.item_no || ""),
+        );
+      case "id-za":
+        return sorted.sort((a, b) =>
+          (b.item_no || "").localeCompare(a.item_no || ""),
+        );
+      default:
+        return sorted;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Top Navigation Bar */}
@@ -448,7 +495,7 @@ export function InventoryPage() {
 
             {/* Filters */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Search
@@ -460,7 +507,7 @@ export function InventoryPage() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search by item name or ID..."
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
                     />
                   </div>
                 </div>
@@ -471,7 +518,7 @@ export function InventoryPage() {
                   <select
                     value={categoryFilter}
                     onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
                   >
                     <option value="all">All Units</option>
                     {categories.map((cat) => (
@@ -488,11 +535,42 @@ export function InventoryPage() {
                   <select
                     value={stockFilter}
                     onChange={(e) => setStockFilter(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
                   >
                     <option value="all">All Levels</option>
                     <option value="low">Low Stock</option>
                     <option value="adequate">Adequate Stock</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Sort By
+                  </label>
+                  <select
+                    value={sortOption}
+                    onChange={(e) =>
+                      setSortOption(
+                        e.target.value as
+                          | "name-az"
+                          | "name-za"
+                          | "unit-az"
+                          | "unit-za"
+                          | "stock-high"
+                          | "stock-low"
+                          | "id-az"
+                          | "id-za",
+                      )
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
+                  >
+                    <option value="name-az">Name (A-Z)</option>
+                    <option value="name-za">Name (Z-A)</option>
+                    <option value="unit-az">Unit (A-Z)</option>
+                    <option value="unit-za">Unit (Z-A)</option>
+                    <option value="stock-high">Stock (High)</option>
+                    <option value="stock-low">Stock (Low)</option>
+                    <option value="id-az">Item ID (A-Z)</option>
+                    <option value="id-za">Item ID (Z-A)</option>
                   </select>
                 </div>
               </div>
@@ -542,7 +620,7 @@ export function InventoryPage() {
                         </td>
                       </tr>
                     ) : (
-                      filteredInventory.map((item) => {
+                      getSortedInventory(filteredInventory).map((item) => {
                         const percentage = item.minimum_stock
                           ? (item.remaining_stock / item.minimum_stock) * 100
                           : 100;

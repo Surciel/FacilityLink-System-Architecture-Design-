@@ -12,6 +12,7 @@ import {
   LogOut,
   Trash2,
   X,
+  ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate, useLocation } from "react-router";
@@ -25,7 +26,6 @@ interface Request {
   description: string;
   unit: string;
   quantity_requested: number;
-  status: string;
   created_at: string;
   request_group_id: string | null;
 }
@@ -35,7 +35,6 @@ interface GroupedRequest {
   requested_by: string;
   department: string;
   created_at: string;
-  status: string;
   items: Request[];
 }
 
@@ -47,6 +46,16 @@ export function InboxPage() {
     null,
   );
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortOption, setSortOption] = useState<
+    | "date-newest"
+    | "date-oldest"
+    | "requester-az"
+    | "requester-za"
+    | "department-az"
+    | "department-za"
+    | "items-most"
+    | "items-few"
+  >("date-newest");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(() => {
     if (typeof window === "undefined") return false;
     const stored = localStorage.getItem("sidebarExpanded");
@@ -126,7 +135,6 @@ export function InboxPage() {
           requested_by: req.requested_by,
           department: req.department,
           created_at: req.created_at,
-          status: req.status,
           items: [],
         };
       }
@@ -217,6 +225,45 @@ export function InboxPage() {
 
   const handleLogout = () => navigate("/admin/login");
 
+  const getSortedGroups = (groups: GroupedRequest[]) => {
+    const sorted = [...groups];
+
+    switch (sortOption) {
+      case "date-newest":
+        return sorted.sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+        );
+      case "date-oldest":
+        return sorted.sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        );
+      case "requester-az":
+        return sorted.sort((a, b) =>
+          (a.requested_by || "").localeCompare(b.requested_by || ""),
+        );
+      case "requester-za":
+        return sorted.sort((a, b) =>
+          (b.requested_by || "").localeCompare(a.requested_by || ""),
+        );
+      case "department-az":
+        return sorted.sort((a, b) =>
+          (a.department || "").localeCompare(b.department || ""),
+        );
+      case "department-za":
+        return sorted.sort((a, b) =>
+          (b.department || "").localeCompare(a.department || ""),
+        );
+      case "items-most":
+        return sorted.sort((a, b) => b.items.length - a.items.length);
+      case "items-few":
+        return sorted.sort((a, b) => a.items.length - b.items.length);
+      default:
+        return sorted;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Top Navigation Bar */}
@@ -304,7 +351,7 @@ export function InboxPage() {
 
             {/* Filters */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="grid grid-cols-1 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Search
@@ -319,6 +366,41 @@ export function InboxPage() {
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Sort By
+                  </label>
+                  <select
+                    value={sortOption}
+                    onChange={(e) =>
+                      setSortOption(
+                        e.target.value as
+                          | "date-newest"
+                          | "date-oldest"
+                          | "requester-az"
+                          | "requester-za"
+                          | "department-az"
+                          | "department-za"
+                          | "items-most"
+                          | "items-few",
+                      )
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                  >
+                    <option value="date-newest">Date (Newest First)</option>
+                    <option value="date-oldest">Date (Oldest First)</option>
+                    <option value="requester-az">Requester Name (A-Z)</option>
+                    <option value="requester-za">Requester Name (Z-A)</option>
+                    <option value="department-az">Department (A-Z)</option>
+                    <option value="department-za">Department (Z-A)</option>
+                    <option value="items-most">
+                      Number of Items (Most to Few)
+                    </option>
+                    <option value="items-few">
+                      Number of Items (Few to Most)
+                    </option>
+                  </select>
                 </div>
               </div>
               <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
@@ -344,7 +426,7 @@ export function InboxPage() {
                     <p className="text-gray-600">No requests found</p>
                   </div>
                 ) : (
-                  filteredGroups.map((group) => (
+                  getSortedGroups(filteredGroups).map((group) => (
                     <div
                       key={group.group_id}
                       ref={(el) => {

@@ -88,13 +88,18 @@ export function Dashboard() {
   const fetchLowStockItems = async () => {
     const { data, error } = await supabase
       .from("inventory")
-      .select("item_no, description, unit, remaining_stock")
-      .lte("remaining_stock", 10)
-      .order("remaining_stock", { ascending: true })
-      .limit(5);
+      .select("item_no, description, unit, remaining_stock, minimum_stock")
+      .order("remaining_stock", { ascending: true });
 
     if (error) return console.error(error);
-    setLowStockItems(data || []);
+    // Filter items where remaining_stock < minimum_stock
+    const lowStock = (data || [])
+      .filter(
+        (item) =>
+          item.minimum_stock && item.remaining_stock < item.minimum_stock,
+      )
+      .slice(0, 5);
+    setLowStockItems(lowStock);
   };
 
   const fetchTotalItems = async () => {
@@ -107,13 +112,9 @@ export function Dashboard() {
   };
 
   const fetchCompletedToday = async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     const { count, error } = await supabase
       .from("requests")
-      .select("*", { count: "exact", head: true })
-      .gte("created_at", today.toISOString());
+      .select("*", { count: "exact", head: true });
 
     if (error) return console.error(error);
     setCompletedToday(count || 0);
