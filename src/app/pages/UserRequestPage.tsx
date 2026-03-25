@@ -6,6 +6,7 @@ import {
   Lock,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Check,
   Trash2,
   Plus,
@@ -68,6 +69,110 @@ export function UserRequestPage() {
       suggestionsFor: undefined,
     },
   ]);
+
+  // State for available inventory items
+  const [availableItems, setAvailableItems] = useState<any[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [activeDropdown, setActiveDropdown] = useState<
+    | { type: "id" | "description"; index: number }
+    | null
+  >(null);
+
+  const [dropdownPortal, setDropdownPortal] = useState<
+    | {
+        type: "id" | "description";
+        index: number;
+        left: number;
+        top: number;
+        width: number;
+      }
+    | null
+  >(null);
+
+  // Update dropdown position on scroll
+  useEffect(() => {
+    if (!activeDropdown || !dropdownPortal) return;
+
+    const handleScroll = () => {
+      const buttons = document.querySelectorAll(
+        `[data-dropdown-button="${activeDropdown.type}-${activeDropdown.index}"]`,
+      );
+      if (buttons.length === 0) return;
+
+      const button = buttons[0] as HTMLElement;
+      const rect = button.getBoundingClientRect();
+
+      setDropdownPortal((prev) =>
+        prev
+          ? {
+              ...prev,
+              left: rect.left,
+              top: rect.bottom + 8,
+            }
+          : null,
+      );
+    };
+
+    window.addEventListener("scroll", handleScroll, true);
+    return () => window.removeEventListener("scroll", handleScroll, true);
+  }, [activeDropdown, dropdownPortal]);
+
+  const handleDropdownButtonClick = (
+    type: "id" | "description",
+    index: number,
+    event: any,
+  ) => {
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+
+    if (activeDropdown?.type === type && activeDropdown.index === index) {
+      setActiveDropdown(null);
+      setDropdownPortal(null);
+      return;
+    }
+
+    setActiveDropdown({ type, index });
+    setDropdownPortal({
+      type,
+      index,
+      left: rect.left,
+      top: rect.bottom + 8,
+      width: Math.max(rect.width, 320),
+    });
+  };
+
+  // Fetch available inventory items on component mount
+  useEffect(() => {
+    if (personalInfo.userType) {
+      fetchAvailableItems();
+    }
+  }, [personalInfo.userType]);
+
+  const fetchAvailableItems = async () => {
+    if (!personalInfo.userType) return;
+
+    setLoadingItems(true);
+    try {
+      const facilityPrefix = personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+
+      const { data, error } = await supabase
+        .from("inventory")
+        .select("item_no, description, unit, remaining_stock")
+        .ilike("item_no", `${facilityPrefix}%`)
+        .order("item_no", { ascending: true });
+
+      if (error) {
+        console.error("Error fetching inventory:", error);
+        return;
+      }
+
+      setAvailableItems(data || []);
+    } catch (error) {
+      console.error("Error fetching inventory:", error);
+    } finally {
+      setLoadingItems(false);
+    }
+  };
 
   const handleAddItem = () => {
     setItems([
@@ -260,7 +365,9 @@ export function UserRequestPage() {
     searchBy: "id" | "description",
   ) => {
     // Build the query based on which field was searched
-    let query = supabase.from("inventory").select("item_no, description, unit");
+    let query = supabase
+      .from("inventory")
+      .select("item_no, description, unit, remaining_stock");
 
     if (searchBy === "id") {
       query = query.eq("item_no", suggestion);
@@ -277,6 +384,11 @@ export function UserRequestPage() {
 
     if (error || !data) return;
 
+    if (data.remaining_stock <= 0) {
+      toast.error("Selected item is currently unavailable (out of stock).");
+      return;
+    }
+
     setItems(
       items.map((item, idx) =>
         idx === itemIndex
@@ -292,6 +404,37 @@ export function UserRequestPage() {
           : item,
       ),
     );
+  };
+
+  const selectFromDropdown = (itemIndex: number, selectedItemNo: string) => {
+    const selectedItem = availableItems.find(item => item.item_no === selectedItemNo);
+    if (!selectedItem) return;
+
+    if (selectedItem.remaining_stock <= 0) {
+      toast.error("Selected item is currently unavailable (out of stock). Please choose another item.");
+      return;
+    }
+
+    console.log("Selected item:", selectedItem);
+
+    setItems(
+      items.map((item, idx) =>
+        idx === itemIndex
+          ? {
+              ...item,
+              id: selectedItem.item_no,
+              itemDescription: selectedItem.description,
+              unitOfMeasure: selectedItem.unit,
+              quantity: 1,
+              suggestions: [],
+              showSuggestions: false,
+              suggestionsFor: undefined,
+            }
+          : item,
+      ),
+    );
+
+    setActiveDropdown(null);
   };
 
   const validateStep1 = () => {
@@ -342,10 +485,10 @@ export function UserRequestPage() {
 
       const facilityPrefix =
         personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
-      const groupId = crypto.randomUUID();
 
+      // Step 1: Validate all items exist and have sufficient stock
+      const validatedItems = [];
       for (const item of items) {
-        // 1. Fetch inventory item
         const { data: inventoryItem, error: fetchError } = await supabase
           .from("inventory")
           .select("item_no, description, unit, remaining_stock")
@@ -361,7 +504,6 @@ export function UserRequestPage() {
           return;
         }
 
-        // 2. Cross-check quantity against remaining stock
         if (item.quantity > inventoryItem.remaining_stock) {
           toast.error(
             `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`,
@@ -370,38 +512,73 @@ export function UserRequestPage() {
           return;
         }
 
-        // 3. Insert request as "approved" immediately
-        const { error: insertError } = await supabase.from("requests").insert({
-          item_no: inventoryItem.item_no,
-          description: inventoryItem.description,
-          unit: inventoryItem.unit,
-          quantity_requested: item.quantity,
-          requested_by: personalInfo.fullName,
-          department: department,
-          status: "approved", // ← auto approved
-          request_group_id: groupId,
+        validatedItems.push({
+          ...item,
+          inventoryDescription: inventoryItem.description,
+          inventoryUnit: inventoryItem.unit,
+          currentStock: inventoryItem.remaining_stock,
         });
+      }
 
-        if (insertError) {
-          toast.error(
-            `Failed to submit request for: ${inventoryItem.description}`,
-          );
-          console.error(insertError);
-          setSubmitting(false);
-          return;
-        }
+      // Step 2: Create request header
+      const { data: requestData, error: requestError } = await supabase
+        .from("requests")
+        .insert({
+          requester_name: personalInfo.fullName,
+          requester_email: personalInfo.fullName, // Using name if email not available
+          requester_type: personalInfo.userType,
+          student_id:
+            personalInfo.userType === "student"
+              ? personalInfo.studentNumber
+              : null,
+          department: department,
+          status: "approved", // Auto-approved
+        })
+        .select()
+        .single();
 
-        // 4. Subtract stock immediately
+      if (requestError || !requestData) {
+        toast.error("Failed to create request. Please try again.");
+        console.error(requestError);
+        setSubmitting(false);
+        return;
+      }
+
+      const requestId = requestData.id;
+
+      // Step 3: Insert request items
+      const requestItemsToInsert = validatedItems.map((item) => ({
+        request_id: requestId,
+        item_name: item.inventoryDescription,
+        category: "Equipment",
+        quantity: item.quantity,
+        unit: item.inventoryUnit,
+        fulfillment_status: "fulfilled",
+      }));
+
+      const { error: itemsError } = await supabase
+        .from("request_items")
+        .insert(requestItemsToInsert);
+
+      if (itemsError) {
+        toast.error("Failed to add items to request. Please try again.");
+        console.error(itemsError);
+        setSubmitting(false);
+        return;
+      }
+
+      // Step 4: Update inventory stock for all items
+      for (const item of validatedItems) {
         const { error: stockError } = await supabase
           .from("inventory")
           .update({
-            remaining_stock: inventoryItem.remaining_stock - item.quantity,
+            remaining_stock: item.currentStock - item.quantity,
           })
-          .eq("item_no", inventoryItem.item_no);
+          .eq("item_no", item.id);
 
         if (stockError) {
           toast.error(
-            `Failed to update stock for: ${inventoryItem.description}`,
+            `Failed to update stock for: ${item.inventoryDescription}`,
           );
           console.error(stockError);
           setSubmitting(false);
@@ -409,6 +586,7 @@ export function UserRequestPage() {
         }
       }
 
+      toast.success("Request submitted successfully!");
       setCurrentStep(3);
     } catch (error) {
       toast.error("Something went wrong. Please try again.");
@@ -782,12 +960,11 @@ export function UserRequestPage() {
                   Request Materials
                 </h2>
                 <p className="text-gray-600">
-                  Add the items you need. Item descriptions must match inventory
-                  exactly.
+                  Add the items you need. You can either select from the dropdown or manually enter item details.
                 </p>
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto overflow-y-auto max-h-[700px] border border-gray-200 rounded-lg pb-24">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b-2 border-gray-300">
@@ -814,37 +991,87 @@ export function UserRequestPage() {
                       <tr key={index} className="border-b border-gray-200">
                         <td className="py-3 px-4 text-gray-700">{index + 1}</td>
                         <td className="py-3 px-4">
-                          <div className="relative flex gap-0">
-                            <div className="w-20 bg-gray-200 border border-green-300 rounded-l flex items-center justify-center font-medium text-gray-700 text-sm">
-                              {personalInfo.userType === "faculty"
-                                ? "JMS"
-                                : "GYM-S"}
+                          <div className="relative">
+                            <div className="flex items-center gap-2">
+                              <div className="relative flex gap-0">
+                                <div className="w-20 bg-gray-200 border border-green-300 rounded-l flex items-center justify-center font-medium text-gray-700 text-sm">
+                                  {personalInfo.userType === "faculty" ? "JMS" : "GYM-S"}
+                                </div>
+                                <input
+                                  type="text"
+                                  value={item.id.replace(/^(JMS|GYM-S)(-)?/, "")}
+                                  onChange={(e) => {
+                                    const facilityPrefix =
+                                      personalInfo.userType === "faculty"
+                                        ? "JMS"
+                                        : "GYM-S";
+                                    const numericOnly = e.target.value
+                                      .replace(/\D/g, "")
+                                      .slice(0, 3);
+                                    const separator =
+                                      personalInfo.userType === "faculty"
+                                        ? ""
+                                        : "-";
+                                    handleItemChange(
+                                      index,
+                                      "id",
+                                      facilityPrefix + separator + numericOnly,
+                                    );
+                                  }}
+                                  maxLength={3}
+                                  className="w-16 px-2 py-2 bg-green-100 border border-green-300 rounded-r focus:ring-2 focus:ring-indigo-600 focus:border-transparent outline-none text-sm"
+                                  placeholder="000"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) =>
+                                  handleDropdownButtonClick("id", index, e)
+                                }
+                                data-dropdown-button={`id-${index}`}
+                                className="h-9 w-9 rounded border border-blue-300 bg-white text-blue-600 hover:bg-blue-50 flex items-center justify-center"
+                                aria-label="Open item ID picker"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                              </button>
                             </div>
-                            <input
-                              type="text"
-                              value={item.id.replace(/^(JMS|GYM-S)(-)?/, "")}
-                              onChange={(e) => {
-                                const facilityPrefix =
-                                  personalInfo.userType === "faculty"
-                                    ? "JMS"
-                                    : "GYM-S";
-                                const numericOnly = e.target.value
-                                  .replace(/\D/g, "")
-                                  .slice(0, 3);
-                                const separator =
-                                  personalInfo.userType === "faculty"
-                                    ? ""
-                                    : "-";
-                                handleItemChange(
-                                  index,
-                                  "id",
-                                  facilityPrefix + separator + numericOnly,
-                                );
-                              }}
-                              maxLength={3}
-                              className="w-16 px-2 py-2 bg-green-100 border border-green-300 rounded-r focus:ring-2 focus:ring-indigo-600 focus:border-transparent outline-none text-sm"
-                              placeholder="000"
-                            />
+
+                            {activeDropdown?.type === "id" &&
+                              activeDropdown.index === index &&
+                              dropdownPortal?.type === "id" &&
+                              dropdownPortal.index === index && (
+                                <div
+                                  className="z-50 rounded border border-gray-200 bg-white shadow-lg"
+                                  style={{
+                                    position: "fixed",
+                                    left: `${dropdownPortal.left}px`,
+                                    top: `${dropdownPortal.top}px`,
+                                    minWidth: `${dropdownPortal.width}px`,
+                                    maxHeight: 240,
+                                    overflowY: "auto",
+                                  }}
+                                >
+                                  {availableItems.map((invItem) => (
+                                    <button
+                                      key={invItem.item_no}
+                                      type="button"
+                                      onClick={() => selectFromDropdown(index, invItem.item_no)}
+                                      disabled={invItem.remaining_stock <= 0}
+                                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                        invItem.remaining_stock <= 0
+                                          ? "text-gray-400 line-through cursor-not-allowed"
+                                          : "text-gray-900 hover:bg-blue-50 cursor-pointer"
+                                      }`}
+                                    >
+                                      {invItem.item_no} - {invItem.description}
+                                      {invItem.remaining_stock <= 0
+                                        ? " (Out of stock)"
+                                        : ""}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
                             {item.showSuggestions &&
                               item.suggestionsFor === "id" &&
                               item.suggestions &&
@@ -855,11 +1082,7 @@ export function UserRequestPage() {
                                       key={idx}
                                       type="button"
                                       onClick={() =>
-                                        selectSuggestion(
-                                          index,
-                                          suggestion,
-                                          "id",
-                                        )
+                                        selectSuggestion(index, suggestion, "id")
                                       }
                                       className="w-full text-left px-3 py-2 text-sm hover:bg-blue-100 border-b border-gray-200 last:border-b-0"
                                     >
@@ -871,42 +1094,94 @@ export function UserRequestPage() {
                           </div>
                         </td>
                         <td className="py-3 px-4 relative">
-                          <input
-                            type="text"
-                            value={item.itemDescription}
-                            onChange={(e) =>
-                              handleItemChange(
-                                index,
-                                "itemDescription",
-                                e.target.value,
-                              )
-                            }
-                            className="w-full px-3 py-2 bg-green-100 border border-green-300 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
-                            placeholder="Enter item description"
-                          />
-                          {item.showSuggestions &&
-                            item.suggestionsFor === "description" &&
-                            item.suggestions &&
-                            item.suggestions.length > 0 && (
-                              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10">
-                                {item.suggestions.map((suggestion, idx) => (
-                                  <button
-                                    key={idx}
-                                    type="button"
-                                    onClick={() =>
-                                      selectSuggestion(
-                                        index,
-                                        suggestion,
-                                        "description",
-                                      )
-                                    }
-                                    className="w-full text-left px-3 py-2 text-sm hover:bg-blue-100 border-b border-gray-200 last:border-b-0"
-                                  >
-                                    {suggestion}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
+                          <div className="relative">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={item.itemDescription}
+                                onChange={(e) =>
+                                  handleItemChange(
+                                    index,
+                                    "itemDescription",
+                                    e.target.value,
+                                  )
+                                }
+                                className="w-full px-3 py-2 bg-green-100 border border-green-300 rounded focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
+                                placeholder="Enter item description"
+                              />
+                              <button
+                                type="button"
+                                onClick={(e) =>
+                                  handleDropdownButtonClick("description", index, e)
+                                }
+                                data-dropdown-button={`description-${index}`}
+                                className="h-9 w-9 rounded border border-blue-300 bg-white text-blue-600 hover:bg-blue-50 flex items-center justify-center"
+                                aria-label="Open item description picker"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {activeDropdown?.type === "description" &&
+                              activeDropdown.index === index &&
+                              dropdownPortal?.type === "description" &&
+                              dropdownPortal.index === index && (
+                                <div
+                                  className="z-50 rounded border border-gray-200 bg-white shadow-lg"
+                                  style={{
+                                    position: "fixed",
+                                    left: `${dropdownPortal.left}px`,
+                                    top: `${dropdownPortal.top}px`,
+                                    minWidth: `${Math.max(dropdownPortal.width, 380)}px`,
+                                    maxHeight: 240,
+                                    overflowY: "auto",
+                                  }}
+                                >
+                                  {availableItems.map((invItem) => (
+                                    <button
+                                      key={invItem.item_no}
+                                      type="button"
+                                      onClick={() => selectFromDropdown(index, invItem.item_no)}
+                                      disabled={invItem.remaining_stock <= 0}
+                                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                        invItem.remaining_stock <= 0
+                                          ? "text-gray-400 line-through cursor-not-allowed"
+                                          : "text-gray-900 hover:bg-blue-50 cursor-pointer"
+                                      }`}
+                                    >
+                                      {invItem.description} ({invItem.item_no})
+                                      {invItem.remaining_stock <= 0
+                                        ? " (Out of stock)"
+                                        : ""}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
+                            {item.showSuggestions &&
+                              item.suggestionsFor === "description" &&
+                              item.suggestions &&
+                              item.suggestions.length > 0 && (
+                                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded shadow-lg z-10">
+                                  {item.suggestions.map((suggestion, idx) => (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      onClick={() =>
+                                        selectSuggestion(
+                                          index,
+                                          suggestion,
+                                          "description",
+                                        )
+                                      }
+                                      className="w-full text-left px-3 py-2 text-sm hover:bg-blue-100 border-b border-gray-200 last:border-b-0"
+                                    >
+                                      {suggestion}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                          </div>
                         </td>
                         <td className="py-3 px-4">
                           <input
