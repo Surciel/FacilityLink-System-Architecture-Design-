@@ -73,21 +73,18 @@ export function UserRequestPage() {
   // State for available inventory items
   const [availableItems, setAvailableItems] = useState<any[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
-  const [activeDropdown, setActiveDropdown] = useState<
-    | { type: "id" | "description"; index: number }
-    | null
-  >(null);
+  const [activeDropdown, setActiveDropdown] = useState<{
+    type: "id" | "description";
+    index: number;
+  } | null>(null);
 
-  const [dropdownPortal, setDropdownPortal] = useState<
-    | {
-        type: "id" | "description";
-        index: number;
-        left: number;
-        top: number;
-        width: number;
-      }
-    | null
-  >(null);
+  const [dropdownPortal, setDropdownPortal] = useState<{
+    type: "id" | "description";
+    index: number;
+    left: number;
+    top: number;
+    width: number;
+  } | null>(null);
 
   // Update dropdown position on scroll
   useEffect(() => {
@@ -153,7 +150,8 @@ export function UserRequestPage() {
 
     setLoadingItems(true);
     try {
-      const facilityPrefix = personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+      const facilityPrefix =
+        personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
 
       const { data, error } = await supabase
         .from("inventory")
@@ -407,11 +405,15 @@ export function UserRequestPage() {
   };
 
   const selectFromDropdown = (itemIndex: number, selectedItemNo: string) => {
-    const selectedItem = availableItems.find(item => item.item_no === selectedItemNo);
+    const selectedItem = availableItems.find(
+      (item) => item.item_no === selectedItemNo,
+    );
     if (!selectedItem) return;
 
     if (selectedItem.remaining_stock <= 0) {
-      toast.error("Selected item is currently unavailable (out of stock). Please choose another item.");
+      toast.error(
+        "Selected item is currently unavailable (out of stock). Please choose another item.",
+      );
       return;
     }
 
@@ -520,49 +522,33 @@ export function UserRequestPage() {
         });
       }
 
-      // Step 2: Create request header
-      const { data: requestData, error: requestError } = await supabase
-        .from("requests")
-        .insert({
-          requester_name: personalInfo.fullName,
-          requester_email: personalInfo.fullName, // Using name if email not available
-          requester_type: personalInfo.userType,
-          student_id:
-            personalInfo.userType === "student"
-              ? personalInfo.studentNumber
-              : null,
-          department: department,
-          status: "approved", // Auto-approved
-        })
-        .select()
-        .single();
+      // Step 2: Generate a request group ID to link all items from this submission
+      const requestGroupId = crypto.randomUUID();
 
-      if (requestError || !requestData) {
-        toast.error("Failed to create request. Please try again.");
-        console.error(requestError);
-        setSubmitting(false);
-        return;
-      }
+      // Get current time in Philippine Time (UTC+8)
+      const phTime = new Date(
+        new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }),
+      );
 
-      const requestId = requestData.id;
-
-      // Step 3: Insert request items
-      const requestItemsToInsert = validatedItems.map((item) => ({
-        request_id: requestId,
-        item_name: item.inventoryDescription,
-        category: "Equipment",
-        quantity: item.quantity,
+      // Step 3: Insert each item as a separate row in requests table
+      const requestsToInsert = validatedItems.map((item) => ({
+        item_no: item.id,
+        description: item.inventoryDescription,
         unit: item.inventoryUnit,
-        fulfillment_status: "fulfilled",
+        quantity_requested: item.quantity,
+        requested_by: personalInfo.fullName,
+        department: department,
+        request_group_id: requestGroupId,
+        created_at: phTime.toISOString(),
       }));
 
-      const { error: itemsError } = await supabase
-        .from("request_items")
-        .insert(requestItemsToInsert);
+      const { error: requestsInsertError } = await supabase
+        .from("requests")
+        .insert(requestsToInsert);
 
-      if (itemsError) {
-        toast.error("Failed to add items to request. Please try again.");
-        console.error(itemsError);
+      if (requestsInsertError) {
+        toast.error("Failed to submit request. Please try again.");
+        console.error(requestsInsertError);
         setSubmitting(false);
         return;
       }
@@ -960,11 +946,12 @@ export function UserRequestPage() {
                   Request Materials
                 </h2>
                 <p className="text-gray-600">
-                  Add the items you need. You can either select from the dropdown or manually enter item details.
+                  Add the items you need. You can either select from the
+                  dropdown or manually enter item details.
                 </p>
               </div>
 
-              <div className="overflow-x-auto overflow-y-auto max-h-[700px] border border-gray-200 rounded-lg pb-24">
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b-2 border-gray-300">
@@ -995,11 +982,16 @@ export function UserRequestPage() {
                             <div className="flex items-center gap-2">
                               <div className="relative flex gap-0">
                                 <div className="w-20 bg-gray-200 border border-green-300 rounded-l flex items-center justify-center font-medium text-gray-700 text-sm">
-                                  {personalInfo.userType === "faculty" ? "JMS" : "GYM-S"}
+                                  {personalInfo.userType === "faculty"
+                                    ? "JMS"
+                                    : "GYM-S"}
                                 </div>
                                 <input
                                   type="text"
-                                  value={item.id.replace(/^(JMS|GYM-S)(-)?/, "")}
+                                  value={item.id.replace(
+                                    /^(JMS|GYM-S)(-)?/,
+                                    "",
+                                  )}
                                   onChange={(e) => {
                                     const facilityPrefix =
                                       personalInfo.userType === "faculty"
@@ -1029,7 +1021,7 @@ export function UserRequestPage() {
                                   handleDropdownButtonClick("id", index, e)
                                 }
                                 data-dropdown-button={`id-${index}`}
-                                className="h-9 w-9 rounded border border-blue-300 bg-white text-blue-600 hover:bg-blue-50 flex items-center justify-center"
+                                className="h-9 w-9 rounded border border-blue-300 bg-white text-blue-600 hover:bg-blue-100 hover:scale-110 transition-all flex items-center justify-center"
                                 aria-label="Open item ID picker"
                               >
                                 <ChevronDown className="w-4 h-4" />
@@ -1055,7 +1047,12 @@ export function UserRequestPage() {
                                     <button
                                       key={invItem.item_no}
                                       type="button"
-                                      onClick={() => selectFromDropdown(index, invItem.item_no)}
+                                      onClick={() =>
+                                        selectFromDropdown(
+                                          index,
+                                          invItem.item_no,
+                                        )
+                                      }
                                       disabled={invItem.remaining_stock <= 0}
                                       className={`w-full text-left px-4 py-2 text-sm transition-colors ${
                                         invItem.remaining_stock <= 0
@@ -1082,7 +1079,11 @@ export function UserRequestPage() {
                                       key={idx}
                                       type="button"
                                       onClick={() =>
-                                        selectSuggestion(index, suggestion, "id")
+                                        selectSuggestion(
+                                          index,
+                                          suggestion,
+                                          "id",
+                                        )
                                       }
                                       className="w-full text-left px-3 py-2 text-sm hover:bg-blue-100 border-b border-gray-200 last:border-b-0"
                                     >
@@ -1112,7 +1113,11 @@ export function UserRequestPage() {
                               <button
                                 type="button"
                                 onClick={(e) =>
-                                  handleDropdownButtonClick("description", index, e)
+                                  handleDropdownButtonClick(
+                                    "description",
+                                    index,
+                                    e,
+                                  )
                                 }
                                 data-dropdown-button={`description-${index}`}
                                 className="h-9 w-9 rounded border border-blue-300 bg-white text-blue-600 hover:bg-blue-50 flex items-center justify-center"
@@ -1141,7 +1146,12 @@ export function UserRequestPage() {
                                     <button
                                       key={invItem.item_no}
                                       type="button"
-                                      onClick={() => selectFromDropdown(index, invItem.item_no)}
+                                      onClick={() =>
+                                        selectFromDropdown(
+                                          index,
+                                          invItem.item_no,
+                                        )
+                                      }
                                       disabled={invItem.remaining_stock <= 0}
                                       className={`w-full text-left px-4 py-2 text-sm transition-colors ${
                                         invItem.remaining_stock <= 0
@@ -1225,7 +1235,7 @@ export function UserRequestPage() {
                             <button
                               type="button"
                               onClick={() => handleRemoveItem(index)}
-                              className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                              className="text-gray-400 hover:text-red-600 hover:scale-125 transition-all p-1"
                             >
                               <Trash2 className="w-5 h-5" />
                             </button>
@@ -1241,7 +1251,7 @@ export function UserRequestPage() {
                 <button
                   type="button"
                   onClick={handleAddItem}
-                  className="bg-black text-white w-12 h-12 rounded-full flex items-center justify-center hover:bg-gray-800 transition-colors shadow-lg"
+                  className="bg-black text-white w-12 h-12 rounded-full flex items-center justify-center hover:bg-gray-800 hover:scale-110 hover:shadow-xl transition-all shadow-lg"
                 >
                   <Plus className="w-6 h-6" />
                 </button>
