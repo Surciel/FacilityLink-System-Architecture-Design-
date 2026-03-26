@@ -97,8 +97,7 @@ export function Dashboard() {
       .filter(
         (item) =>
           item.minimum_stock && item.remaining_stock < item.minimum_stock,
-      )
-      .slice(0, 5);
+      );
     setLowStockItems(lowStock);
   };
 
@@ -112,9 +111,16 @@ export function Dashboard() {
   };
 
   const fetchCompletedToday = async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
     const { count, error } = await supabase
       .from("requests")
-      .select("*", { count: "exact", head: true });
+      .select("*", { count: "exact", head: true })
+      .gte("created_at", today.toISOString())
+      .lt("created_at", tomorrow.toISOString());
 
     if (error) return console.error(error);
     setCompletedToday(count || 0);
@@ -434,7 +440,7 @@ export function Dashboard() {
                       All items are well stocked!
                     </div>
                   ) : (
-                    lowStockItems.map((item, index) => {
+                    lowStockItems.slice(0, 5).map((item, index) => {
                       const minimum = 10;
                       const percentage = Math.min(
                         (item.remaining_stock / minimum) * 100,

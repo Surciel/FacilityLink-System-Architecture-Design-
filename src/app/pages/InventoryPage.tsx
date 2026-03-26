@@ -228,7 +228,6 @@ export function InventoryPage() {
       setShowRestockModal(false);
       setSelectedItem(null);
       setRestockAmount("");
-      setResupplyDate("");
       fetchInventory();
     }
     setActionLoading(false);
@@ -257,7 +256,6 @@ export function InventoryPage() {
   const openRestockModal = (item: InventoryItem) => {
     setSelectedItem(item);
     setRestockAmount("");
-    setResupplyDate("");
     setShowRestockModal(true);
   };
 
@@ -726,17 +724,6 @@ export function InventoryPage() {
                         placeholder="Enter quantity to add"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                         min="1"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Next Resupply Date
-                      </label>
-                      <input
-                        type="date"
-                        value={resupplyDate}
-                        onChange={(e) => setResupplyDate(e.target.value)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                       />
                     </div>
                     {restockAmount && (
