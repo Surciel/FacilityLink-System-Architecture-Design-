@@ -99,36 +99,20 @@ export function AnalyticsPage() {
   };
 
   const fullMonths = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
   ];
   const currentMonth = fullMonths[new Date().getMonth()];
   const currentYearStr = new Date().getFullYear();
   const defaultMonthOption = `${currentMonth} ${currentYearStr}`;
-  const [ssmiMonthOption, setSsmiMonthOption] =
-    useState<string>(defaultMonthOption);
+  const [ssmiMonthOption, setSsmiMonthOption] = useState<string>(defaultMonthOption);
 
-  const [risReportFacility, setRisReportFacility] = useState<"JMS" | "GYM">(
-    "JMS",
-  );
-  const [risMonthOption, setRisMonthOption] =
-    useState<string>(defaultMonthOption);
+  const [risReportFacility, setRisReportFacility] = useState<"JMS" | "GYM">("JMS");
+  const [risMonthOption, setRisMonthOption] = useState<string>(defaultMonthOption);
   const [risWeekOption, setRisWeekOption] = useState<string>("week1");
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
 
-  useEffect(() => {
-    fetchAllData();
-  }, []);
+  useEffect(() => { fetchAllData(); }, []);
 
   useEffect(() => {
     localStorage.setItem("sidebarExpanded", JSON.stringify(isSidebarExpanded));
@@ -172,54 +156,36 @@ export function AnalyticsPage() {
     const currentYear = now.getFullYear();
 
     const fullMonths = [
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
     ];
 
     const monthlyData: Record<string, number> = {};
 
-    // Fetch all inventory_history data at once for efficiency
     const { data: allHistoryData } = await supabase
       .from("inventory_history")
       .select("*");
 
-    // Create a map of period_label to total_qty_issued sum
     const historyByPeriod: Record<string, number> = {};
     (allHistoryData || []).forEach((row) => {
       const label = row.period_label;
       if (label) {
-        historyByPeriod[label] =
-          (historyByPeriod[label] || 0) + (row.total_qty_issued || 0);
+        historyByPeriod[label] = (historyByPeriod[label] || 0) + (row.total_qty_issued || 0);
       }
     });
 
-    // Get data for the last 6 months (or back to January of current year, whichever is shorter)
     for (let i = 0; i < 6; i++) {
       const date = new Date(currentYear, currentMonthIndex, 1);
       date.setMonth(date.getMonth() - i);
       const monthIndex = date.getMonth();
       const year = date.getFullYear();
 
-      // Stop if we go back to previous year
-      if (year < currentYear) {
-        break;
-      }
+      if (year < currentYear) break;
 
       const monthName = fullMonths[monthIndex];
       const displayKey = `${monthName} ${year}`;
 
       if (monthIndex === currentMonthIndex && year === currentYear) {
-        // Current month: fetch from requests table
         const firstDay = new Date(year, monthIndex, 1);
         const lastDay = new Date(year, monthIndex + 1, 0);
         const { data } = await supabase
@@ -227,15 +193,9 @@ export function AnalyticsPage() {
           .select("quantity_requested")
           .gte("created_at", firstDay.toISOString())
           .lte("created_at", lastDay.toISOString());
-
-        const total = (data || []).reduce(
-          (sum, row) => sum + (row.quantity_requested || 0),
-          0,
-        );
+        const total = (data || []).reduce((sum, row) => sum + (row.quantity_requested || 0), 0);
         monthlyData[displayKey] = total;
       } else {
-        // Previous months: use pre-fetched inventory_history data
-        // Match the format: "January 1 to 31, 2026"
         const firstDay = new Date(year, monthIndex, 1);
         const lastDay = new Date(year, monthIndex + 1, 0);
         const periodLabel = `${monthName} ${firstDay.getDate()} to ${lastDay.getDate()}, ${year}`;
@@ -243,15 +203,11 @@ export function AnalyticsPage() {
       }
     }
 
-    // Convert to array and reverse for chronological order (oldest first)
     const trendData = Object.entries(monthlyData)
       .reverse()
       .map(([month]) => {
         const [monthName] = month.split(" ");
-        return {
-          month: monthName,
-          items: monthlyData[month],
-        };
+        return { month: monthName, items: monthlyData[month] };
       });
 
     setMonthlyTrendData(trendData);
@@ -271,11 +227,9 @@ export function AnalyticsPage() {
       const month = new Date(row.created_at).getMonth();
       const name = row.description || "Unknown";
       if (month === thisMonth)
-        thisMonthCounts[name] =
-          (thisMonthCounts[name] || 0) + (row.quantity_requested || 0);
+        thisMonthCounts[name] = (thisMonthCounts[name] || 0) + (row.quantity_requested || 0);
       if (month === lastMonth)
-        lastMonthCounts[name] =
-          (lastMonthCounts[name] || 0) + (row.quantity_requested || 0);
+        lastMonthCounts[name] = (lastMonthCounts[name] || 0) + (row.quantity_requested || 0);
     });
 
     setTopRequestedItems(
@@ -287,28 +241,13 @@ export function AnalyticsPage() {
           requests,
           trend:
             lastMonthCounts[name] > 0
-              ? Math.round(
-                  ((requests - lastMonthCounts[name]) / lastMonthCounts[name]) *
-                    100,
-                )
+              ? Math.round(((requests - lastMonthCounts[name]) / lastMonthCounts[name]) * 100)
               : 0,
         })),
     );
 
-    const colors = [
-      "#3b82f6",
-      "#10b981",
-      "#f59e0b",
-      "#ef4444",
-      "#8b5cf6",
-      "#ec4899",
-    ];
-
-    // Get top 6 items first, then calculate percentages based only on those items
-    const topSix = Object.entries(thisMonthCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6);
-
+    const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+    const topSix = Object.entries(thisMonthCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
     const topSixTotal = topSix.reduce((sum, [_, count]) => sum + count, 0);
 
     setCategoryDistribution(
@@ -326,8 +265,7 @@ export function AnalyticsPage() {
     const { data } = await supabase.from("requests").select("department");
     const grouped: Record<string, number> = {};
     (data || []).forEach((row) => {
-      if (row.department)
-        grouped[row.department] = (grouped[row.department] || 0) + 1;
+      if (row.department) grouped[row.department] = (grouped[row.department] || 0) + 1;
     });
     setDepartmentActivity(
       Object.entries(grouped)
@@ -337,12 +275,8 @@ export function AnalyticsPage() {
   };
 
   const fetchSummaryStats = async () => {
-    const { data } = await supabase
-      .from("inventory")
-      .select("remaining_stock, minimum_stock");
-    const outOfStockCount = (data || []).filter(
-      (item) => item.remaining_stock <= 0,
-    ).length;
+    const { data } = await supabase.from("inventory").select("remaining_stock, minimum_stock");
+    const outOfStockCount = (data || []).filter((item) => item.remaining_stock <= 0).length;
     setItemsNeedRestock(outOfStockCount);
   };
 
@@ -364,17 +298,12 @@ export function AnalyticsPage() {
 
     setAvailableMonths(uniqueMonths);
     if (uniqueMonths.length > 0) {
-      if (!uniqueMonths.includes(risMonthOption)) {
-        setRisMonthOption(uniqueMonths[0]);
-      }
-      if (!uniqueMonths.includes(ssmiMonthOption)) {
-        setSsmiMonthOption(uniqueMonths[0]);
-      }
+      if (!uniqueMonths.includes(risMonthOption)) setRisMonthOption(uniqueMonths[0]);
+      if (!uniqueMonths.includes(ssmiMonthOption)) setSsmiMonthOption(uniqueMonths[0]);
     }
   };
 
-  // --- PDF GENERATION ---
-
+  // ── SSMI PDF ────────────────────────────────────────────────────────────
   const generateSSMIPDF = async () => {
     setGenerating("SSMI");
     const prefix = reportFacility === "JMS" ? "JMS" : "GYM-S";
@@ -383,7 +312,6 @@ export function AnalyticsPage() {
       const isHistoricalMonth = availableMonths.includes(ssmiMonthOption);
 
       if (isHistoricalMonth) {
-        // Fetch from inventory_history for selected month
         const { data: historyItems } = await supabase
           .from("inventory_history")
           .select("*")
@@ -397,7 +325,6 @@ export function AnalyticsPage() {
           return;
         }
 
-        // Parse the month and year from period_label (e.g., "January 1 to 31, 2026")
         const parts = ssmiMonthOption.split(" ");
         const monthName = parts[0];
         const yearStr = parts[parts.length - 1];
@@ -405,6 +332,7 @@ export function AnalyticsPage() {
         const year = parseInt(yearStr);
         const lastDay = new Date(year, monthIndex + 1, 0);
 
+        // ── Unit column REMOVED from bodyData ──
         const bodyData = historyItems.map((item) => {
           const w1 = item.week1 || 0;
           const w2 = item.week2 || 0;
@@ -419,7 +347,7 @@ export function AnalyticsPage() {
           return [
             item.item_no || "",
             item.item_description || "",
-            item.unit || "",
+            // unit removed
             stockOnHand,
             w1 || "",
             w2 || "",
@@ -440,66 +368,51 @@ export function AnalyticsPage() {
         const fetchStart = `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
         const fetchEnd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${lastDay.getDate()}`;
 
-        doc
-          .setFontSize(12)
-          .text("Pamantasan ng Lungsod ng Maynila", pageWidth / 2, 12, {
-            align: "center",
-          });
-        doc
-          .setFont("times", "bold")
-          .setFontSize(11)
-          .text("SUMMARY OF SUPPLIES AND MATERIALS ISSUED", pageWidth / 2, 18, {
-            align: "center",
-          });
-        doc
-          .setFont("times", "normal")
-          .text("General Services Office", pageWidth / 2, 24, {
-            align: "center",
-          });
-        doc
-          .setFontSize(10)
-          .text(`For the Period: ${fetchStart} to ${fetchEnd}`, 15, 32);
-        doc.text(`No. GS0${prefix}-${year}-02`, pageWidth - 15, 32, {
-          align: "right",
-        });
+        doc.setFontSize(12).text("Pamantasan ng Lungsod ng Maynila", pageWidth / 2, 12, { align: "center" });
+        doc.setFont("times", "bold").setFontSize(11).text("SUMMARY OF SUPPLIES AND MATERIALS ISSUED", pageWidth / 2, 18, { align: "center" });
+        doc.setFont("times", "normal").text("General Services Office", pageWidth / 2, 24, { align: "center" });
+        doc.setFontSize(10).text(`For the Period: ${fetchStart} to ${fetchEnd}`, 15, 32);
+        doc.text(`No. GS0${prefix}-${year}-02`, pageWidth - 15, 32, { align: "right" });
 
-        const m = lastDay
-          .toLocaleString("default", { month: "short" })
-          .toUpperCase();
+        const m = lastDay.toLocaleString("default", { month: "short" }).toUpperCase();
 
-        // Main Table Config
         autoTable(doc, {
           head: [
             [
-              { content: "Item No.", rowSpan: 3 },
-              { content: "Item Description", rowSpan: 3 },
-              { content: "Unit", rowSpan: 3 },
-              { content: "Stock Hand", rowSpan: 3 },
+              { content: "Item No.", rowSpan: 3, styles: { valign: "middle", halign: "center" } },
+              { content: "Item Description", rowSpan: 3, styles: { valign: "middle", halign: "center" } },
+              // Unit header REMOVED
+              { content: "Stock Hand", rowSpan: 3, styles: { valign: "middle", halign: "center" } },
               {
-                content:
-                  "Requisition and Issue Slip Numbers Used for Other Supplies Quantity Issued",
+                content: "Requisition and Issue Slip Numbers Used for Other Supplies Quantity Issued",
                 colSpan: 5,
+                styles: { halign: "center", fontStyle: "bold" },
               },
-              { content: "Total Qty Issued", rowSpan: 3 },
-              { content: "Unit Cost\n(PhP)", rowSpan: 3 },
-              { content: "Total Cost\n(PhP)", rowSpan: 3 },
-              { content: "Balance on\nHand", rowSpan: 3 },
+              { content: "Total Qty Issued", rowSpan: 3, styles: { valign: "middle", halign: "center" } },
+              { content: "Unit Cost\n(PhP)", rowSpan: 3, styles: { valign: "middle", halign: "center" } },
+              { content: "Total Cost\n(PhP)", rowSpan: 3, styles: { valign: "middle", halign: "center" } },
+              { content: "Balance on\nHand", rowSpan: 3, styles: { valign: "middle", halign: "center" } },
             ],
             [
-              { content: `1-8 ${m}` },
-              { content: `9-15 ${m}` },
-              { content: `16-22 ${m}` },
-              { content: `23-${lastDay.getDate()} ${m}` },
-              { content: "DELIVERY", rowSpan: 2 },
+              { content: `1-8 ${m}`, styles: { halign: "center" } },
+              { content: `9-15 ${m}`, styles: { halign: "center" } },
+              { content: `16-22 ${m}`, styles: { halign: "center" } },
+              { content: `23-${lastDay.getDate()} ${m}`, styles: { halign: "center" } },
+              { content: "DELIVERY", rowSpan: 2, styles: { halign: "center", valign: "middle" } },
             ],
-            ["1", "2", "3", "4"],
+            [
+              { content: "1", styles: { halign: "center", fontStyle: "bold" } },
+              { content: "2", styles: { halign: "center", fontStyle: "bold" } },
+              { content: "3", styles: { halign: "center", fontStyle: "bold" } },
+              { content: "4", styles: { halign: "center", fontStyle: "bold" } },
+            ],
           ],
           body: bodyData,
           foot: [
             [
               {
                 content: `TOTAL AMOUNT ${" . ".repeat(180)}`,
-                colSpan: 13,
+                colSpan: 12,
                 styles: {
                   halign: "left",
                   fontStyle: "bold",
@@ -531,7 +444,8 @@ export function AnalyticsPage() {
           },
           columnStyles: {
             0: { cellWidth: 24, halign: "center" },
-            1: { cellWidth: 62 },
+            1: { cellWidth: 70 },
+            // column 2 is now Stock Hand (unit removed)
             2: { halign: "center" },
             3: { halign: "center" },
             4: { halign: "center" },
@@ -539,14 +453,12 @@ export function AnalyticsPage() {
             6: { halign: "center" },
             7: { halign: "center" },
             8: { halign: "center" },
-            9: { halign: "center" },
+            9: { halign: "right" },
             10: { halign: "right" },
-            11: { halign: "right" },
-            12: { cellWidth: 25, halign: "center" },
+            11: { cellWidth: 25, halign: "center" },
           },
         });
 
-        // ---- Perfectly Sealed Signature Block ----
         autoTable(doc, {
           startY: (doc as any).lastAutoTable.finalY,
           theme: "grid",
@@ -560,32 +472,17 @@ export function AnalyticsPage() {
           },
           body: [
             [
-              {
-                content:
-                  "Prepared by:\n\n\nGRACIANO B. MONTIADORA\nStore keeper I",
-                styles: { halign: "left" },
-              },
-              {
-                content: "Noted by:\n\n\nEMILY E. ESPERO\nChief, GSO",
-                styles: { halign: "left" },
-              },
-              {
-                content:
-                  "Posted in the SLC by:\n\n\nMA. ELVIRA B. SALAMAT\nAdministrative Assistant I",
-                styles: { halign: "left" },
-              },
+              { content: "Prepared by:\n\n\nGRACIANO B. MONTIADORA\nStore keeper I", styles: { halign: "left" } },
+              { content: "Noted by:\n\n\nEMILY E. ESPERO\nChief, GSO", styles: { halign: "left" } },
+              { content: "Posted in the SLC by:\n\n\nMA. ELVIRA B. SALAMAT\nAdministrative Assistant I", styles: { halign: "left" } },
             ],
           ],
         });
 
-        doc.save(
-          `SSMI_${reportFacility}_${ssmiMonthOption.replace(" ", "_")}.pdf`,
-        );
+        doc.save(`SSMI_${reportFacility}_${ssmiMonthOption.replace(" ", "_")}.pdf`);
         toast.success("SSMI Report Downloaded!");
       } else {
-        toast.error(
-          `Month ${ssmiMonthOption} not found in inventory history. Please select a valid month.`,
-        );
+        toast.error(`Month ${ssmiMonthOption} not found in inventory history. Please select a valid month.`);
       }
     } catch (err) {
       toast.error("Failed to generate report.");
@@ -595,6 +492,7 @@ export function AnalyticsPage() {
     }
   };
 
+  // ── RIS WEEKLY PDF ──────────────────────────────────────────────────────
   const generateRISWeeklyPDF = async () => {
     setGenerating("Weekly");
     try {
@@ -603,7 +501,6 @@ export function AnalyticsPage() {
       const monthIndex = monthNameToIndex[monthName];
       const year = parseInt(yearStr);
 
-      // Define week date ranges
       const weekRanges: { [key: string]: [number, number] } = {
         week1: [1, 8],
         week2: [9, 15],
@@ -613,7 +510,6 @@ export function AnalyticsPage() {
 
       const [startDay, endDay] = weekRanges[risWeekOption] || [1, 8];
 
-      // Fetch data from inventory_history
       const { data: historyData } = await supabase
         .from("inventory_history")
         .select("*")
@@ -630,52 +526,17 @@ export function AnalyticsPage() {
       doc.setFont("times");
       const pageWidth = doc.internal.pageSize.width;
 
-      doc
-        .setFontSize(9)
-        .text("Republic of the Philippines", pageWidth / 2, 15, {
-          align: "center",
-        });
-      doc
-        .setFont("times", "bold")
-        .setFontSize(10)
-        .text("PAMANTASAN NG LUNGSOD NG MAYNILA", pageWidth / 2, 20, {
-          align: "center",
-        });
-      doc
-        .setFont("times", "normal")
-        .setFontSize(9)
-        .text(
-          "(University of the City of Manila)\nIntramuros, Manila",
-          pageWidth / 2,
-          24,
-          { align: "center" },
-        );
-      doc
-        .setFont("times", "bold")
-        .text("GYMNASIUM MANAGEMENT SECTION", pageWidth / 2, 34, {
-          align: "center",
-        });
-      doc
-        .setFontSize(14)
-        .text("REQUISITION AND ISSUE SLIP", pageWidth / 2, 42, {
-          align: "center",
-        });
+      doc.setFontSize(9).text("Republic of the Philippines", pageWidth / 2, 15, { align: "center" });
+      doc.setFont("times", "bold").setFontSize(10).text("PAMANTASAN NG LUNGSOD NG MAYNILA", pageWidth / 2, 20, { align: "center" });
+      doc.setFont("times", "normal").setFontSize(9).text("(University of the City of Manila)\nIntramuros, Manila", pageWidth / 2, 24, { align: "center" });
+      doc.setFont("times", "bold").text("GYMNASIUM MANAGEMENT SECTION", pageWidth / 2, 34, { align: "center" });
+      doc.setFontSize(14).text("REQUISITION AND ISSUE SLIP", pageWidth / 2, 42, { align: "center" });
 
       const weekLabel = risWeekOption.replace("week", "Week ");
       autoTable(doc, {
         body: [
-          [
-            "Division :",
-            "Responsibility Center",
-            `RIS No.: ${year}-${String(monthIndex + 1).padStart(2, "0")}-001`,
-            monthName.toUpperCase(),
-          ],
-          [
-            "Office : GSO",
-            "Code",
-            "SAI No.:",
-            `${weekLabel} (${startDay}-${endDay})`,
-          ],
+          ["Division :", "Responsibility Center", `RIS No.: ${year}-${String(monthIndex + 1).padStart(2, "0")}-001`, monthName.toUpperCase()],
+          ["Office : GSO", "Code", "SAI No.:", `${weekLabel} (${startDay}-${endDay})`],
         ],
         startY: 48,
         theme: "plain",
@@ -695,6 +556,7 @@ export function AnalyticsPage() {
         },
       });
 
+      // ── Unit column REMOVED from bodyData and head ──
       const bodyData = historyData
         .sort((a, b) => (a.item_no || "").localeCompare(b.item_no || ""))
         .map((item) => {
@@ -702,7 +564,7 @@ export function AnalyticsPage() {
           const quantity = item[weekKey] || 0;
           return [
             item.item_no || "",
-            item.unit || "",
+            // unit removed
             item.item_description || "",
             quantity,
             quantity,
@@ -710,20 +572,26 @@ export function AnalyticsPage() {
           ];
         })
         .filter((row) => {
-          const quantity = row[3]; // quantity is at index 3
+          const quantity = row[2]; // quantity now at index 2 (shifted)
           return quantity !== null && quantity !== 0 && quantity !== undefined;
         });
-      while (bodyData.length < 15) bodyData.push(["", "", "", "", "", ""]);
+
+      while (bodyData.length < 15) bodyData.push(["", "", "", "", ""]);
 
       autoTable(doc, {
         head: [
           [
-            { content: "Stock No.", rowSpan: 2 },
-            { content: "Unit", rowSpan: 2 },
-            { content: "Requisition", colSpan: 2 },
-            { content: "Issuance", colSpan: 2 },
+            { content: "Stock No.", rowSpan: 2, styles: { halign: "center", valign: "middle" } },
+            // Unit header REMOVED
+            { content: "Requisition", colSpan: 2, styles: { halign: "center" } },
+            { content: "Issuance", colSpan: 2, styles: { halign: "center" } },
           ],
-          ["Description", "Quantity", "Quantity", "Remarks"],
+          [
+            { content: "Description", styles: { halign: "center" } },
+            { content: "Quantity", styles: { halign: "center" } },
+            { content: "Quantity", styles: { halign: "center" } },
+            { content: "Remarks", styles: { halign: "center" } },
+          ],
         ],
         body: bodyData,
         startY: (doc as any).lastAutoTable.finalY,
@@ -744,9 +612,10 @@ export function AnalyticsPage() {
         },
         columnStyles: {
           0: { cellWidth: 25, halign: "center" },
-          1: { cellWidth: 15, halign: "center" },
-          3: { halign: "center" },
-          4: { halign: "center" },
+          // unit column removed — description now at index 1
+          1: { cellWidth: 80 },
+          2: { halign: "center" }, // Quantity (requisition)
+          3: { halign: "center" }, // Quantity (issuance)
         },
       });
 
@@ -764,22 +633,14 @@ export function AnalyticsPage() {
         body: [
           ["", "Requested by:", "Approved by:", "Issued by:", "Received by:"],
           ["Signature:", "", "", "", ""],
-          [
-            "Printed Name:",
-            "UTILITY WORKERS",
-            "EMILY E. ESPERO",
-            "GRACIANO MONTIADORA",
-            "UTILITY WORKERS",
-          ],
+          ["Printed Name:", "UTILITY WORKERS", "EMILY E. ESPERO", "GRACIANO MONTIADORA", "UTILITY WORKERS"],
           ["Designation:", "GSO", "Chief, GSO", "STOREKEEPER", "GSO"],
           ["Date:", "", "", "", ""],
         ],
         columnStyles: { 0: { fontStyle: "italic", cellWidth: 25 } },
       });
 
-      doc.save(
-        `RIS_${risReportFacility}_${risMonthOption.replace(" ", "_")}_${risWeekOption}.pdf`,
-      );
+      doc.save(`RIS_${risReportFacility}_${risMonthOption.replace(" ", "_")}_${risWeekOption}.pdf`);
       toast.success("RIS Report Downloaded!");
     } catch (err) {
       toast.error("Failed to generate report.");
@@ -821,10 +682,7 @@ export function AnalyticsPage() {
       <aside
         className={`fixed top-16 left-0 bottom-0 bg-white shadow-lg transition-all duration-300 z-20 ${isSidebarExpanded || isSidebarPinned ? "w-64" : "w-20"}`}
         onMouseEnter={() => !isSidebarPinned && setIsSidebarExpanded(true)}
-        onMouseLeave={() => {
-          setIsSidebarExpanded(false);
-          setIsSidebarPinned(false);
-        }}
+        onMouseLeave={() => { setIsSidebarExpanded(false); setIsSidebarPinned(false); }}
       >
         <nav className="p-4 space-y-2">
           {menuItems.map((item) => {
@@ -833,17 +691,11 @@ export function AnalyticsPage() {
             return (
               <button
                 key={item.path}
-                onClick={() => {
-                  setIsSidebarPinned(true);
-                  setIsSidebarExpanded(true);
-                  navigate(item.path);
-                }}
+                onClick={() => { setIsSidebarPinned(true); setIsSidebarExpanded(true); navigate(item.path); }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${active ? "bg-[#4A89B0] text-white shadow-md" : "text-gray-700 hover:bg-gray-100"}`}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
-                <span
-                  className={`font-medium whitespace-nowrap transition-opacity duration-300 ${isSidebarExpanded || isSidebarPinned ? "opacity-100" : "opacity-0 w-0 overflow-hidden"}`}
-                >
+                <span className={`font-medium whitespace-nowrap transition-opacity duration-300 ${isSidebarExpanded || isSidebarPinned ? "opacity-100" : "opacity-0 w-0 overflow-hidden"}`}>
                   {item.label}
                 </span>
               </button>
@@ -857,37 +709,29 @@ export function AnalyticsPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200">
-              <h2 className="text-2xl font-bold text-gray-900">
-                {selectedCategoryDetail.fullName}
-              </h2>
+              <h2 className="text-2xl font-bold text-gray-900">{selectedCategoryDetail.fullName}</h2>
               <p className="text-sm text-gray-600 mt-2">Detailed Analysis</p>
             </div>
             <div className="p-6 space-y-4">
               <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4">
                 <div className="text-sm text-gray-600">Percentage</div>
-                <div className="text-3xl font-bold text-[#4A89B0]">
-                  {selectedCategoryDetail.value}%
-                </div>
+                <div className="text-3xl font-bold text-[#4A89B0]">{selectedCategoryDetail.value}%</div>
               </div>
               <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
                 <div className="text-sm text-gray-600">Total Requests</div>
-                <div className="text-3xl font-bold text-purple-600">
-                  {selectedCategoryDetail.count}
-                </div>
+                <div className="text-3xl font-bold text-purple-600">{selectedCategoryDetail.count}</div>
               </div>
               <div className="border-t border-gray-200 pt-4">
                 <h3 className="font-semibold text-gray-900 mb-2">Summary</h3>
                 <p className="text-sm text-gray-600">
-                  This item represents {selectedCategoryDetail.value}% of all
-                  requests this month, with a total of{" "}
-                  {selectedCategoryDetail.count} requests.
+                  This item represents {selectedCategoryDetail.value}% of all requests this month, with a total of {selectedCategoryDetail.count} requests.
                 </p>
               </div>
             </div>
-            <div className="p-6 border-t border-gray-200 flex gap-3">
+            <div className="p-6 border-t border-gray-200">
               <button
                 onClick={() => setShowCategoryDetailModal(false)}
-                className="flex-1 px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+                className="w-full px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300 transition-colors font-medium"
               >
                 Close
               </button>
@@ -896,20 +740,14 @@ export function AnalyticsPage() {
         </div>
       )}
 
-      <main
-        className={`pt-16 transition-all duration-300 ${isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"}`}
-      >
+      <main className={`pt-16 transition-all duration-300 ${isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"}`}>
         <div className="p-4 lg:p-8 space-y-6">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              Analytics & Reports
-            </h1>
-            <p className="text-gray-600 mt-1">
-              Insights and trends from your inventory data
-            </p>
+            <h1 className="text-3xl font-bold text-gray-900">Analytics & Reports</h1>
+            <p className="text-gray-600 mt-1">Insights and trends from your inventory data</p>
           </div>
 
-          {/* STAT CARDS */}
+          {/* Stat Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-blue-600 rounded-xl p-6 text-white shadow-md">
               <Package className="w-8 h-8 mb-2 opacity-80" />
@@ -923,15 +761,11 @@ export function AnalyticsPage() {
             </div>
           </div>
 
-          {/* STACKED CHARTS (No longer overlapping) */}
+          {/* Charts */}
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <h3 className="text-xl font-bold text-gray-900">
-                Category Distribution
-              </h3>
-              <p className="text-sm text-gray-600 mt-1 mb-6">
-                Percentage of requests by item (click for details)
-              </p>
+              <h3 className="text-xl font-bold text-gray-900">Category Distribution</h3>
+              <p className="text-sm text-gray-600 mt-1 mb-6">Percentage of requests by item (click for details)</p>
               {categoryDistribution.length > 0 ? (
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
@@ -944,188 +778,116 @@ export function AnalyticsPage() {
                       outerRadius={100}
                       dataKey="value"
                       isAnimationActive={false}
-                      onClick={(entry) => {
-                        setSelectedCategoryDetail(entry);
-                        setShowCategoryDetailModal(true);
-                      }}
+                      onClick={(entry) => { setSelectedCategoryDetail(entry); setShowCategoryDetailModal(true); }}
                       style={{ cursor: "pointer" }}
                     >
                       {categoryDistribution.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip
-                      formatter={(value) => `${value}%`}
-                      cursor={false}
-                      contentStyle={{ pointerEvents: "none" }}
-                    />
+                    <Tooltip formatter={(value) => `${value}%`} cursor={false} contentStyle={{ pointerEvents: "none" }} />
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-[300px] flex items-center justify-center text-gray-400">
-                  No data available
-                </div>
+                <div className="h-[300px] flex items-center justify-center text-gray-400">No data available</div>
               )}
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <h3 className="text-xl font-bold text-gray-900">
-                Department Activity
-              </h3>
-              <p className="text-sm text-gray-600 mt-1 mb-6">
-                Requests by department
-              </p>
+              <h3 className="text-xl font-bold text-gray-900">Department Activity</h3>
+              <p className="text-sm text-gray-600 mt-1 mb-6">Requests by department</p>
               {departmentActivity.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
-                  <BarChart
-                    data={departmentActivity}
-                    layout="vertical"
-                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                  >
+                  <BarChart data={departmentActivity} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis type="number" />
-                    <YAxis
-                      dataKey="dept"
-                      type="category"
-                      width={200}
-                      tick={{ fontSize: 12 }}
-                    />
+                    <YAxis dataKey="dept" type="category" width={200} tick={{ fontSize: 12 }} />
                     <Tooltip />
                     <Bar dataKey="requests" fill="#8b5cf6" name="Requests" />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-[300px] flex items-center justify-center text-gray-400">
-                  No data available
-                </div>
+                <div className="h-[300px] flex items-center justify-center text-gray-400">No data available</div>
               )}
             </div>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h3 className="text-xl font-bold text-gray-900">
-              6-Month Trend Analysis
-            </h3>
-            <p className="text-sm text-gray-600 mt-1 mb-6">
-              Items distributed over time
-            </p>
+            <h3 className="text-xl font-bold text-gray-900">6-Month Trend Analysis</h3>
+            <p className="text-sm text-gray-600 mt-1 mb-6">Items distributed over time</p>
             {monthlyTrendData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={monthlyTrendData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="month" />
                   <YAxis>
-                    <Label
-                      value="Number of Items"
-                      angle={-90}
-                      position="insideLeft"
-                      style={{ textAnchor: "middle" }}
-                    />
+                    <Label value="Number of Items" angle={-90} position="insideLeft" style={{ textAnchor: "middle" }} />
                   </YAxis>
                   <Tooltip />
                   <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="items"
-                    stroke="#3b82f6"
-                    strokeWidth={2}
-                    name="Items Distributed"
-                  />
+                  <Line type="monotone" dataKey="items" stroke="#3b82f6" strokeWidth={2} name="Items Distributed" />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-[300px] flex items-center justify-center text-gray-400">
-                No data available
-              </div>
+              <div className="h-[300px] flex items-center justify-center text-gray-400">No data available</div>
             )}
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h3 className="text-xl font-bold text-gray-900">
-              Decision Support System
-            </h3>
-            <p className="text-sm text-gray-600 mt-1 mb-6">
-              Top requested items with trend analysis
-            </p>
+            <h3 className="text-xl font-bold text-gray-900">Decision Support System</h3>
+            <p className="text-sm text-gray-600 mt-1 mb-6">Top requested items with trend analysis</p>
             {topRequestedItems.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {topRequestedItems.map((item, index) => (
-                  <div
-                    key={index}
-                    className="p-4 bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-lg"
-                  >
+                  <div key={index} className="p-4 bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-lg">
                     <div className="flex items-start justify-between mb-2">
                       <div>
-                        <div className="text-sm font-semibold text-gray-900">
-                          {item.name}
-                        </div>
-                        <div className="text-2xl font-bold text-[#4A89B0] mt-1">
-                          {item.requests}
-                        </div>
-                        <div className="text-xs text-gray-600">
-                          requests this month
-                        </div>
+                        <div className="text-sm font-semibold text-gray-900">{item.name}</div>
+                        <div className="text-2xl font-bold text-[#4A89B0] mt-1">{item.requests}</div>
+                        <div className="text-xs text-gray-600">requests this month</div>
                       </div>
-                      <div
-                        className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 ${item.trend > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
-                      >
-                        {item.trend > 0 ? (
-                          <TrendingUp className="w-3 h-3" />
-                        ) : (
-                          <TrendingDown className="w-3 h-3" />
-                        )}
+                      <div className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 ${item.trend > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                        {item.trend > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                         {Math.abs(item.trend)}%
                       </div>
                     </div>
                     <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-gray-700">
                       {item.trend > 0 ? (
-                        <span className="flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3 text-orange-500" />{" "}
-                          Consider increasing stock
-                        </span>
+                        <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-orange-500" /> Consider increasing stock</span>
                       ) : (
-                        <span className="text-gray-500">
-                          Demand stable or decreasing
-                        </span>
+                        <span className="text-gray-500">Demand stable or decreasing</span>
                       )}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="py-12 flex items-center justify-center text-gray-400">
-                No trend data available
-              </div>
+              <div className="py-12 flex items-center justify-center text-gray-400">No trend data available</div>
             )}
           </div>
 
-          {/* REPORTS EXPORT */}
+          {/* Report Generation */}
           <div className="bg-gradient-to-br from-[#5891B8] to-[#3776A0] rounded-xl shadow-lg p-8 text-white">
             <h3 className="text-2xl font-bold mb-6 flex items-center gap-2">
               <Download className="w-6 h-6" /> Generate Reports
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* RIS Report */}
               <div className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl p-6 flex flex-col h-full shadow-sm">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="bg-white/20 p-2 rounded-lg">
                     <Calendar className="w-5 h-5 text-white" />
                   </div>
-                  <div className="font-semibold text-xl text-white">
-                    RIS Report Options
-                  </div>
+                  <div className="font-semibold text-xl text-white">RIS Report Options</div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-3 mb-6">
                   <div>
-                    <label className="block text-xs font-medium text-white/80 mb-1.5">
-                      Facility Equipment
-                    </label>
+                    <label className="block text-xs font-medium text-white/80 mb-1.5">Facility Equipment</label>
                     <select
                       value={risReportFacility}
-                      onChange={(e) =>
-                        setRisReportFacility(e.target.value as "JMS" | "GYM")
-                      }
+                      onChange={(e) => setRisReportFacility(e.target.value as "JMS" | "GYM")}
                       className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
                     >
                       <option value="JMS">JMS Equipments</option>
@@ -1133,9 +895,7 @@ export function AnalyticsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-white/80 mb-1.5">
-                      Month Target
-                    </label>
+                    <label className="block text-xs font-medium text-white/80 mb-1.5">Month Target</label>
                     <select
                       value={risMonthOption}
                       onChange={(e) => setRisMonthOption(e.target.value)}
@@ -1143,9 +903,7 @@ export function AnalyticsPage() {
                     >
                       {availableMonths.length > 0 ? (
                         availableMonths.map((month) => (
-                          <option key={month} value={month}>
-                            {month}
-                          </option>
+                          <option key={month} value={month}>{month}</option>
                         ))
                       ) : (
                         <option>No data available</option>
@@ -1153,9 +911,7 @@ export function AnalyticsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-white/80 mb-1.5">
-                      Week
-                    </label>
+                    <label className="block text-xs font-medium text-white/80 mb-1.5">Week</label>
                     <select
                       value={risWeekOption}
                       onChange={(e) => setRisWeekOption(e.target.value)}
@@ -1172,33 +928,28 @@ export function AnalyticsPage() {
                 <button
                   onClick={generateRISWeeklyPDF}
                   disabled={generating !== null}
-                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-auto shadow-sm"
+                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-auto shadow-sm disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
                   {generating === "Weekly" ? "Generating..." : "Download PDF"}
                 </button>
               </div>
 
+              {/* SSMI Report */}
               <div className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl p-6 flex flex-col h-full shadow-sm">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="bg-white/20 p-2 rounded-lg">
                     <Package className="w-5 h-5 text-white" />
                   </div>
-                  <div className="font-semibold text-xl text-white">
-                    SSMI Report Options
-                  </div>
+                  <div className="font-semibold text-xl text-white">SSMI Report Options</div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mb-6">
                   <div>
-                    <label className="block text-xs font-medium text-white/80 mb-1.5">
-                      Facility Equipment
-                    </label>
+                    <label className="block text-xs font-medium text-white/80 mb-1.5">Facility Equipment</label>
                     <select
                       value={reportFacility}
-                      onChange={(e) =>
-                        setReportFacility(e.target.value as "JMS" | "GYM")
-                      }
+                      onChange={(e) => setReportFacility(e.target.value as "JMS" | "GYM")}
                       className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
                     >
                       <option value="JMS">JMS Equipments</option>
@@ -1206,18 +957,14 @@ export function AnalyticsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-white/80 mb-1.5">
-                      Month Target
-                    </label>
+                    <label className="block text-xs font-medium text-white/80 mb-1.5">Month Target</label>
                     <select
                       value={ssmiMonthOption}
                       onChange={(e) => setSsmiMonthOption(e.target.value)}
                       className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
                     >
                       {availableMonths.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
+                        <option key={opt} value={opt}>{opt}</option>
                       ))}
                     </select>
                   </div>
@@ -1226,7 +973,7 @@ export function AnalyticsPage() {
                 <button
                   onClick={generateSSMIPDF}
                   disabled={generating !== null}
-                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-auto shadow-sm"
+                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-auto shadow-sm disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
                   {generating === "SSMI" ? "Generating..." : "Download PDF"}
@@ -1234,6 +981,7 @@ export function AnalyticsPage() {
               </div>
             </div>
           </div>
+
         </div>
       </main>
     </div>
