@@ -96,7 +96,7 @@ export function Dashboard() {
     const lowStock = (data || [])
       .filter(
         (item) =>
-          item.minimum_stock && item.remaining_stock < item.minimum_stock,
+          item.minimum_stock != null && item.remaining_stock < item.minimum_stock,
       );
     setLowStockItems(lowStock);
   };
@@ -149,7 +149,7 @@ export function Dashboard() {
       color: "bg-red-500",
     },
     {
-      label: "Requests Today",
+      label: "Requests Items Today",
       value: loading ? "..." : completedToday,
       icon: TrendingUp,
       color: "bg-green-500",
@@ -441,7 +441,7 @@ export function Dashboard() {
                     </div>
                   ) : (
                     lowStockItems.slice(0, 5).map((item, index) => {
-                      const minimum = 10;
+                      const minimum = item.minimum_stock || 10;
                       const percentage = Math.min(
                         (item.remaining_stock / minimum) * 100,
                         100,

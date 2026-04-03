@@ -296,6 +296,11 @@ export function AnalyticsPage() {
       return monthNameToIndex[monthB] - monthNameToIndex[monthA];
     });
 
+    // Add current month to the list if not already present
+    if (!uniqueMonths.includes(defaultMonthOption)) {
+      uniqueMonths.unshift(defaultMonthOption);
+    }
+
     setAvailableMonths(uniqueMonths);
     if (uniqueMonths.length > 0) {
       if (!uniqueMonths.includes(risMonthOption)) setRisMonthOption(uniqueMonths[0]);
@@ -510,11 +515,39 @@ export function AnalyticsPage() {
 
       const [startDay, endDay] = weekRanges[risWeekOption] || [1, 8];
 
-      const { data: historyData } = await supabase
+      let historyData: any[] = [];
+
+      // Try to get data from inventory_history first
+      const { data: historicalData } = await supabase
         .from("inventory_history")
         .select("*")
         .ilike("item_no", `${prefix}%`)
         .eq("period_label", risMonthOption);
+
+      if (historicalData && historicalData.length > 0) {
+        historyData = historicalData;
+      } else {
+        // If no inventory_history data and it's the current month, fetch from requests table
+        const isCurrentMonth = monthName === currentMonth && year === new Date().getFullYear();
+        if (isCurrentMonth) {
+          const firstDay = new Date(year, monthIndex, startDay);
+          const lastDay = new Date(year, monthIndex, endDay);
+          const { data: requestsData } = await supabase
+            .from("requests")
+            .select("item_no, description, quantity_requested")
+            .gte("created_at", firstDay.toISOString())
+            .lte("created_at", lastDay.toISOString());
+
+          if (requestsData && requestsData.length > 0) {
+            // Transform requests data to match inventory_history structure
+            historyData = requestsData.map((req) => ({
+              item_no: req.item_no || "",
+              item_description: req.description || "",
+              [`week${risWeekOption.replace("week", "")}`]: req.quantity_requested || 0,
+            }));
+          }
+        }
+      }
 
       if (!historyData || historyData.length === 0) {
         toast.error(`No data found for ${risMonthOption} (${prefix})`);
