@@ -53,7 +53,7 @@ export function UserRequestPage() {
     fullName: "",
     userType: "",
     studentNumber: "",
-    facultyId: "",
+    facultyId: "+63 ",
     college: "",
     department: "",
   });
@@ -451,11 +451,15 @@ export function UserRequestPage() {
       toast.error("Please enter your student number and college");
       return false;
     }
+    if (personalInfo.userType === "faculty" && !personalInfo.department) {
+      toast.error("Please enter your department");
+      return false;
+    }
     if (
       personalInfo.userType === "faculty" &&
-      (!personalInfo.facultyId || !personalInfo.department)
+      !/^\+63 \d{3} \d{3} \d{4}$/.test(personalInfo.facultyId)
     ) {
-      toast.error("Please enter your faculty ID and department");
+      toast.error("Phone number must be in format +63 XXX XXX XXXX");
       return false;
     }
     return true;
@@ -610,7 +614,7 @@ export function UserRequestPage() {
           fullName: "",
           userType: "",
           studentNumber: "",
-          facultyId: "",
+          facultyId: "+63 ",
           college: "",
           department: "",
         });
@@ -625,7 +629,7 @@ export function UserRequestPage() {
       fullName: "",
       userType: "",
       studentNumber: "",
-      facultyId: "",
+      facultyId: "+63 ",
       college: "",
       department: "",
     });
@@ -780,6 +784,7 @@ export function UserRequestPage() {
                           ...personalInfo,
                           userType: "faculty",
                           studentNumber: "",
+                          facultyId: "+63 ",
                         })
                       }
                       className={`py-3 px-4 rounded-lg border-2 font-medium transition-all ${
@@ -802,17 +807,21 @@ export function UserRequestPage() {
                       type="text"
                       value={personalInfo.studentNumber}
                       onChange={(e) => {
-                        const filtered = e.target.value.replace(
-                          /[^0-9\-\s]/g,
-                          "",
-                        );
+                        let value = e.target.value.replace(/[^0-9]/g, "");
+
+                        // Add dash after 4 digits
+                        if (value.length > 4) {
+                          value = value.slice(0, 4) + "-" + value.slice(4);
+                        }
+                        
                         setPersonalInfo({
                           ...personalInfo,
-                          studentNumber: filtered,
+                          studentNumber: value,
                         });
                       }}
+                      maxLength={10}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                      placeholder="Enter your student number"
+                      placeholder="XXXX-XXXXX"
                     />
                   </div>
                 )}
@@ -826,17 +835,41 @@ export function UserRequestPage() {
                       type="text"
                       value={personalInfo.facultyId}
                       onChange={(e) => {
-                        const filtered = e.target.value.replace(
-                          /[^0-9\-\s]/g,
-                          "",
-                        );
+                        // Extract only digits from the entire input
+                        const allDigits = e.target.value.replace(/\D/g, "");
+                        
+                        // Remove the leading 63 if present (user shouldn't be able to change it)
+                        let userDigits = allDigits.startsWith("63") 
+                          ? allDigits.slice(2) 
+                          : allDigits;
+                        
+                        // Enforce max length of 10 digits
+                        if (userDigits.length > 10) {
+                          userDigits = userDigits.slice(0, 10);
+                        }
+                        
+                        // Format as +63 XXX XXX XXXX
+                        let formatted = "+63";
+                        if (userDigits.length > 0) {
+                          formatted += " " + userDigits.slice(0, 3);
+                          if (userDigits.length > 3) {
+                            formatted += " " + userDigits.slice(3, 6);
+                          }
+                          if (userDigits.length > 6) {
+                            formatted += " " + userDigits.slice(6, 10);
+                          }
+                        } else {
+                          formatted += " ";
+                        }
+                        
                         setPersonalInfo({
                           ...personalInfo,
-                          facultyId: filtered,
+                          facultyId: formatted,
                         });
                       }}
+                      maxLength={17}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                      placeholder="Enter your phone number"
+                      placeholder="+63 XXX XXX XXXX"
                     />
                   </div>
                 )}
