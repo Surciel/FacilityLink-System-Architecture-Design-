@@ -38,7 +38,7 @@ export function UserRequestPage() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
-  const debounceTimersRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const debounceTimersRef = useRef<Record<string, number>>({});
 
   // Cleanup debounce timers on component unmount
   useEffect(() => {
@@ -537,8 +537,6 @@ export function UserRequestPage() {
       // Step 3: Insert each item as a separate row in requests table
       const requestsToInsert = validatedItems.map((item) => ({
         item_no: item.id,
-        description: item.inventoryDescription,
-        unit: item.inventoryUnit,
         quantity_requested: item.quantity,
         requested_by: personalInfo.fullName,
         department: department,
@@ -813,7 +811,7 @@ export function UserRequestPage() {
                         if (value.length > 4) {
                           value = value.slice(0, 4) + "-" + value.slice(4);
                         }
-                        
+
                         setPersonalInfo({
                           ...personalInfo,
                           studentNumber: value,
@@ -837,17 +835,17 @@ export function UserRequestPage() {
                       onChange={(e) => {
                         // Extract only digits from the entire input
                         const allDigits = e.target.value.replace(/\D/g, "");
-                        
+
                         // Remove the leading 63 if present (user shouldn't be able to change it)
-                        let userDigits = allDigits.startsWith("63") 
-                          ? allDigits.slice(2) 
+                        let userDigits = allDigits.startsWith("63")
+                          ? allDigits.slice(2)
                           : allDigits;
-                        
+
                         // Enforce max length of 10 digits
                         if (userDigits.length > 10) {
                           userDigits = userDigits.slice(0, 10);
                         }
-                        
+
                         // Format as +63 XXX XXX XXXX
                         let formatted = "+63";
                         if (userDigits.length > 0) {
@@ -861,7 +859,7 @@ export function UserRequestPage() {
                         } else {
                           formatted += " ";
                         }
-                        
+
                         setPersonalInfo({
                           ...personalInfo,
                           facultyId: formatted,

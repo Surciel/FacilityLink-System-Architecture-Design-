@@ -213,24 +213,53 @@ export function InventoryPage() {
     }
 
     setActionLoading(true);
-    const { error } = await supabase
-      .from("inventory")
-      .update({ remaining_stock: selectedItem.remaining_stock + amount })
-      .eq("item_no", selectedItem.item_no);
 
-    if (error) {
-      toast.error("Failed to restock item");
-      console.error(error);
-    } else {
+    try {
+      // Step 1: Record delivery in the deliveries table
+      const deliveryDate =
+        resupplyDate || new Date().toISOString().split("T")[0];
+      const { error: deliveryError } = await supabase
+        .from("deliveries")
+        .insert({
+          item_no: selectedItem.item_no,
+          quantity_delivered: amount,
+          delivery_date: deliveryDate,
+        });
+
+      if (deliveryError) {
+        const errorMsg = deliveryError.message || "Failed to record delivery";
+        toast.error(errorMsg);
+        console.error("Delivery Error:", deliveryError);
+        setActionLoading(false);
+        return;
+      }
+
+      // Step 2: Update inventory stock
+      const { error: inventoryError } = await supabase
+        .from("inventory")
+        .update({ remaining_stock: selectedItem.remaining_stock + amount })
+        .eq("item_no", selectedItem.item_no);
+
+      if (inventoryError) {
+        const errorMsg =
+          inventoryError.message || "Failed to update inventory stock";
+        toast.error(errorMsg);
+        console.error("Inventory Error:", inventoryError);
+        setActionLoading(false);
+        return;
+      }
+
       toast.success(
         `Successfully restocked ${amount} ${selectedItem.unit}(s) of ${selectedItem.description}`,
       );
       setShowRestockModal(false);
       setSelectedItem(null);
       setRestockAmount("");
+      setResupplyDate("");
       fetchInventory();
+    } finally {
+      setActionLoading(false);
     }
-    setActionLoading(false);
   };
 
   // ── QUICK ADJUST ─────────────────────────────────────────────────────────

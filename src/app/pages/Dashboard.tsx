@@ -77,7 +77,7 @@ export function Dashboard() {
   const fetchRequests = async () => {
     const { data, error } = await supabase
       .from("requests")
-      .select("*")
+      .select("*, inventory(description, unit)")
       .order("created_at", { ascending: false })
       .limit(30);
 
@@ -93,11 +93,10 @@ export function Dashboard() {
 
     if (error) return console.error(error);
     // Filter items where remaining_stock < minimum_stock
-    const lowStock = (data || [])
-      .filter(
-        (item) =>
-          item.minimum_stock != null && item.remaining_stock < item.minimum_stock,
-      );
+    const lowStock = (data || []).filter(
+      (item) =>
+        item.minimum_stock != null && item.remaining_stock < item.minimum_stock,
+    );
     setLowStockItems(lowStock);
   };
 
@@ -180,9 +179,9 @@ export function Dashboard() {
         searchQuery.toLowerCase(),
       ) ||
       groupItems.some((item) =>
-        (item.description?.toLowerCase() || "").includes(
-          searchQuery.toLowerCase(),
-        ),
+        ((item as any).inventory?.description || "")
+          .toLowerCase()
+          .includes(searchQuery.toLowerCase()),
       ),
   );
 
@@ -391,13 +390,18 @@ export function Dashboard() {
                                   </span>
                                 </div>
                                 <div className="text-sm text-gray-700">
-                                  {groupItems.map((item, idx) => (
-                                    <span key={idx}>
-                                      {idx > 0 && " — "}
-                                      {item.description} (
-                                      {item.quantity_requested} {item.unit})
-                                    </span>
-                                  ))}
+                                  {groupItems.map((item, idx) => {
+                                    const inventory = (item as any).inventory;
+                                    return (
+                                      <span key={idx}>
+                                        {idx > 0 && " — "}
+                                        {inventory?.description ||
+                                          "Unknown Item"}{" "}
+                                        ({item.quantity_requested}{" "}
+                                        {inventory?.unit || ""})
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             </div>

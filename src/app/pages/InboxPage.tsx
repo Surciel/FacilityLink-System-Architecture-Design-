@@ -23,8 +23,6 @@ interface Request {
   requested_by: string;
   department: string;
   item_no: string;
-  description: string;
-  unit: string;
   quantity_requested: number;
   created_at: string;
   request_group_id: string | null;
@@ -115,7 +113,7 @@ export function InboxPage() {
     setLoading(true);
     const { data, error } = await supabase
       .from("requests")
-      .select("*")
+      .select("*, inventory(description, unit)")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -127,7 +125,7 @@ export function InboxPage() {
 
     const groups: Record<string, GroupedRequest> = {};
 
-    (data || []).forEach((req: Request) => {
+    (data || []).forEach((req: any) => {
       const groupKey = req.request_group_id || req.pkid;
       if (!groups[groupKey]) {
         groups[groupKey] = {
@@ -138,7 +136,11 @@ export function InboxPage() {
           items: [],
         };
       }
-      groups[groupKey].items.push(req);
+      // Add inventory data to request object
+      const requestItem: Request = {
+        ...req,
+      };
+      groups[groupKey].items.push(requestItem);
     });
 
     const sorted = Object.values(groups).sort(
@@ -157,12 +159,14 @@ export function InboxPage() {
     for (const item of groupToDelete.items) {
       const { data: inventoryItem, error: fetchError } = await supabase
         .from("inventory")
-        .select("remaining_stock")
+        .select("remaining_stock, description")
         .eq("item_no", item.item_no)
         .single();
 
       if (fetchError || !inventoryItem) {
-        toast.error(`Could not fetch stock for: ${item.description}`);
+        toast.error(
+          `Could not fetch stock for: ${(item as any).inventory?.description || "Unknown Item"}`,
+        );
         setDeleteLoading(false);
         return;
       }
@@ -176,7 +180,9 @@ export function InboxPage() {
         .eq("item_no", item.item_no);
 
       if (restoreError) {
-        toast.error(`Failed to restore stock for: ${item.description}`);
+        toast.error(
+          `Failed to restore stock for: ${inventoryItem.description}`,
+        );
         setDeleteLoading(false);
         return;
       }
@@ -187,7 +193,9 @@ export function InboxPage() {
         .eq("pkid", item.pkid);
 
       if (deleteError) {
-        toast.error(`Failed to delete request for: ${item.description}`);
+        toast.error(
+          `Failed to delete request for: ${inventoryItem.description}`,
+        );
         setDeleteLoading(false);
         return;
       }
@@ -210,7 +218,7 @@ export function InboxPage() {
         searchQuery.toLowerCase(),
       ) ||
       group.items.some((i) =>
-        (i.description?.toLowerCase() || "").includes(
+        ((i as any).inventory?.description?.toLowerCase() || "").includes(
           searchQuery.toLowerCase(),
         ),
       ),
@@ -478,19 +486,23 @@ export function InboxPage() {
                           <div className="text-sm font-medium text-gray-700">
                             Requested Items:
                           </div>
-                          {group.items.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between text-sm"
-                            >
-                              <span className="text-gray-700">
-                                {item.description}
-                              </span>
-                              <span className="bg-[#4A89B0] text-white px-2 py-0.5 rounded text-xs font-medium">
-                                × {item.quantity_requested} {item.unit}
-                              </span>
-                            </div>
-                          ))}
+                          {group.items.map((item, idx) => {
+                            const inventory = (item as any).inventory;
+                            return (
+                              <div
+                                key={idx}
+                                className="flex items-center justify-between text-sm"
+                              >
+                                <span className="text-gray-700">
+                                  {inventory?.description || "Unknown Item"}
+                                </span>
+                                <span className="bg-[#4A89B0] text-white px-2 py-0.5 rounded text-xs font-medium">
+                                  × {item.quantity_requested}{" "}
+                                  {inventory?.unit || ""}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
@@ -544,13 +556,15 @@ export function InboxPage() {
                             >
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-sm font-medium text-gray-900">
-                                  {item.description}
+                                  {(item as any).inventory?.description ||
+                                    "Unknown Item"}
                                 </span>
                                 <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded font-medium">
                                   # {item.item_no}
                                 </span>
                                 <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded font-medium">
-                                  Qty: {item.quantity_requested} {item.unit}
+                                  Qty: {item.quantity_requested}{" "}
+                                  {(item as any).inventory?.unit || ""}
                                 </span>
                               </div>
                             </div>
@@ -609,10 +623,12 @@ export function InboxPage() {
                         className="flex items-center justify-between text-sm py-1"
                       >
                         <span className="text-gray-700">
-                          {item.description}
+                          {(item as any).inventory?.description ||
+                            "Unknown Item"}
                         </span>
                         <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
-                          +{item.quantity_requested} {item.unit}
+                          +{item.quantity_requested}{" "}
+                          {(item as any).inventory?.unit || ""}
                         </span>
                       </div>
                     ))}
