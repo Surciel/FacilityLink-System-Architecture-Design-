@@ -173,31 +173,41 @@ export function InventoryPage() {
 
   // ── REMOVE ───────────────────────────────────────────────────────────────
   const handleRemoveItem = async (itemId: string) => {
-    const item = inventory.find((i) => i.item_no === itemId);
-    if (!item) return;
+  const item = inventory.find((i) => i.item_no === itemId);
+  if (!item) return;
 
-    if (
-      !confirm(
-        `Are you sure you want to remove "${item.description}" from inventory?`,
-      )
+  if (
+    !confirm(
+      `Are you sure you want to remove "${item.description}" from inventory? This will also delete all related requests, deliveries, and history.`,
     )
-      return;
+  )
+    return;
 
-    setActionLoading(true);
+  setActionLoading(true);
+  try {
+    await supabase.from("requests").delete().eq("item_no", itemId);
+    await supabase.from("deliveries").delete().eq("item_no", itemId);
+    await supabase.from("inventory_history").delete().eq("item_no", itemId);
+
     const { error } = await supabase
       .from("inventory")
       .delete()
       .eq("item_no", itemId);
 
     if (error) {
-      toast.error("Failed to remove item");
+      toast.error("Failed to remove item: " + error.message);
       console.error(error);
     } else {
       toast.success(`Successfully removed ${item.description} from inventory`);
       fetchInventory();
     }
+  } catch (err) {
+    toast.error("An error occurred while removing the item");
+    console.error(err);
+  } finally {
     setActionLoading(false);
-  };
+  }
+};
 
   // ── RESTOCK ──────────────────────────────────────────────────────────────
   const handleRestock = async () => {
