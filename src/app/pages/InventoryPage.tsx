@@ -52,7 +52,6 @@ export function InventoryPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [stockFilter, setStockFilter] = useState("all");
   const [sortOption, setSortOption] = useState<
     | "name-az"
     | "name-za"
@@ -65,6 +64,8 @@ export function InventoryPage() {
   >("name-az");
   const [showRestockModal, setShowRestockModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [restockAmount, setRestockAmount] = useState("");
   const [resupplyDate, setResupplyDate] = useState("");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(() => {
@@ -86,6 +87,7 @@ export function InventoryPage() {
   );
   const [editSearchItemNo, setEditSearchItemNo] = useState("");
   const [editSearchDescription, setEditSearchDescription] = useState("");
+  const [editOriginalItemNo, setEditOriginalItemNo] = useState("");
   const [removeSearchItemNo, setRemoveSearchItemNo] = useState("");
   const [removeSearchDescription, setRemoveSearchDescription] = useState("");
   const [itemIdPrefix, setItemIdPrefix] = useState<"JMS" | "GYM-S">("JMS");
@@ -129,6 +131,39 @@ export function InventoryPage() {
     setLoading(false);
   };
 
+  // ── HELPERS ───────────────────────────────────────────────────────────────
+  const buildItemNo = (
+    prefix: "JMS" | "GYM-S",
+    number: string,
+    letter: string,
+  ) => {
+    const formattedLetter = letter.toUpperCase();
+    return prefix === "JMS"
+      ? `JMS${number}${formattedLetter}`
+      : `GYM-S-${number}${formattedLetter}`;
+  };
+
+  // FIX: correctly parse both JMS and GYM-S- prefixes
+  const parseItemNo = (itemNo: string) => {
+    if (itemNo.startsWith("GYM-S-")) {
+      // GYM-S-010A → prefix=GYM-S, number=010, letter=A
+      const rest = itemNo.slice(6); // "010A" or "010"
+      const number = rest.slice(0, 3);
+      const letter = rest.slice(3).toUpperCase();
+      return { prefix: "GYM-S" as "GYM-S", number, letter };
+    }
+
+    if (itemNo.startsWith("JMS")) {
+      // JMS010A → prefix=JMS, number=010, letter=A
+      const rest = itemNo.slice(3); // "010A" or "010"
+      const number = rest.slice(0, 3);
+      const letter = rest.slice(3).toUpperCase();
+      return { prefix: "JMS" as "JMS", number, letter };
+    }
+
+    return { prefix: "JMS" as "JMS", number: "", letter: "" };
+  };
+
   // ── ADD ──────────────────────────────────────────────────────────────────
   const handleAddItem = async () => {
     if (!itemIdNumber || !newItem.description || !newItem.unit) {
@@ -141,15 +176,8 @@ export function InventoryPage() {
       return;
     }
 
-    // Build final item number based on prefix
-    let finalItemNo = "";
-    if (itemIdPrefix === "JMS") {
-      finalItemNo = `JMS${itemIdNumber}${itemIdLetter.toUpperCase()}`;
-    } else {
-      finalItemNo = `GYM-S-${itemIdNumber}${itemIdLetter.toUpperCase()}`;
-    }
+    const finalItemNo = buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter);
 
-    // Check if item already exists
     if (itemIdExists) {
       toast.error(
         `Item ID ${finalItemNo} already exists. Please use a different combination.`,
@@ -157,7 +185,6 @@ export function InventoryPage() {
       return;
     }
 
-    // Check if item name already exists
     if (itemNameExists) {
       toast.error(
         `An item with the name "${newItem.description}" already exists in inventory.`,
@@ -201,37 +228,115 @@ export function InventoryPage() {
     setActionLoading(false);
   };
 
-  // ── EDIT ─────────────────────────────────────────────────────────────────
+  // ── EDIT (with safe item_no migration) ─────────────────────────────────
   const handleEditItem = async () => {
     if (!editingItem) return;
 
-    setActionLoading(true);
-    const { error } = await supabase
-      .from("inventory")
-      .update({
-        description: editingItem.description,
-        unit: editingItem.unit,
-        remaining_stock:
-          typeof editingItem.remaining_stock === "string"
-            ? parseInt(editingItem.remaining_stock) || 0
-            : editingItem.remaining_stock,
-        minimum_stock:
-          typeof editingItem.minimum_stock === "string"
-            ? parseInt(editingItem.minimum_stock) || 0
-            : editingItem.minimum_stock,
-      })
-      .eq("item_no", editingItem.item_no);
-
-    if (error) {
-      toast.error("Failed to update item");
-      console.error(error);
-    } else {
-      toast.success(`Successfully updated ${editingItem.description}`);
-      setEditingItem(null);
-      setShowUpdateModal(false);
-      fetchInventory();
+    if (itemIdNumber.length !== 3) {
+      toast.error("Item number must be exactly 3 digits");
+      return;
     }
-    setActionLoading(false);
+
+    if (itemIdExists) {
+      toast.error("Item ID already exists. Please choose a different one.");
+      return;
+    }
+
+    const newItemNo = buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter);
+    const oldItemNo = editOriginalItemNo;
+    const itemNoChanged = newItemNo !== oldItemNo;
+
+    setActionLoading(true);
+    try {
+      if (itemNoChanged) {
+        // Create the new inventory row first so child FK updates point to a valid parent.
+        const { error: insertError } = await supabase.from("inventory").insert({
+          item_no: newItemNo,
+          description: editingItem.description,
+          unit: editingItem.unit,
+          remaining_stock:
+            typeof editingItem.remaining_stock === "string"
+              ? parseInt(editingItem.remaining_stock) || 0
+              : editingItem.remaining_stock,
+          minimum_stock:
+            typeof editingItem.minimum_stock === "string"
+              ? parseInt(editingItem.minimum_stock as string) || 0
+              : editingItem.minimum_stock,
+        });
+
+        if (insertError) {
+          console.error("Failed to create new inventory row:", insertError);
+          toast.error("Failed to update item: " + insertError.message);
+          return;
+        }
+
+        const updateTargets = ["requests", "deliveries", "inventory_history"] as const;
+        for (const table of updateTargets) {
+          const { error: updateError } = await supabase
+            .from(table)
+            .update({ item_no: newItemNo })
+            .eq("item_no", oldItemNo);
+
+          if (updateError) {
+            console.error(`Failed to update ${table}:`, updateError);
+            await supabase.from("inventory").delete().eq("item_no", newItemNo);
+            toast.error(`Failed to update related ${table}: ` + updateError.message);
+            return;
+          }
+        }
+
+        const { error: deleteError } = await supabase
+          .from("inventory")
+          .delete()
+          .eq("item_no", oldItemNo);
+
+        if (deleteError) {
+          console.error("Failed to remove old inventory row:", deleteError);
+          await supabase.from("inventory").delete().eq("item_no", newItemNo);
+          toast.error("Failed to complete item update: " + deleteError.message);
+          return;
+        }
+
+        toast.success(`Successfully updated ${editingItem.description}`);
+        setEditingItem(null);
+        setEditOriginalItemNo("");
+        setShowUpdateModal(false);
+        fetchInventory();
+        return;
+      }
+
+      const { error } = await supabase
+        .from("inventory")
+        .update({
+          description: editingItem.description,
+          unit: editingItem.unit,
+          remaining_stock:
+            typeof editingItem.remaining_stock === "string"
+              ? parseInt(editingItem.remaining_stock) || 0
+              : editingItem.remaining_stock,
+          minimum_stock:
+            typeof editingItem.minimum_stock === "string"
+              ? parseInt(editingItem.minimum_stock as string) || 0
+              : editingItem.minimum_stock,
+        })
+        .eq("item_no", oldItemNo);
+
+      if (error) {
+        toast.error("Failed to update item: " + error.message);
+        console.error(error);
+      } else {
+        toast.success(`Successfully updated ${editingItem.description}`);
+        setEditingItem(null);
+        setEditOriginalItemNo("");
+        setShowUpdateModal(false);
+        fetchInventory();
+      }
+    } catch (err) {
+      toast.error("An unexpected error occurred while updating");
+      console.error(err);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   // ── REMOVE ───────────────────────────────────────────────────────────────
@@ -239,15 +344,9 @@ export function InventoryPage() {
     const item = inventory.find((i) => i.item_no === itemId);
     if (!item) return;
 
-    if (
-      !confirm(
-        `Are you sure you want to remove "${item.description}" from inventory? This will also delete all related requests, deliveries, and history.`,
-      )
-    )
-      return;
-
     setActionLoading(true);
     try {
+      // Delete related records first to avoid FK constraint violations
       await supabase.from("requests").delete().eq("item_no", itemId);
       await supabase.from("deliveries").delete().eq("item_no", itemId);
       await supabase.from("inventory_history").delete().eq("item_no", itemId);
@@ -274,6 +373,18 @@ export function InventoryPage() {
     }
   };
 
+  const requestRemoveItem = (item: InventoryItem) => {
+    setDeleteTarget(item);
+    setShowDeleteModal(true);
+  };
+
+  const confirmRemoveItem = async () => {
+    if (!deleteTarget) return;
+    setShowDeleteModal(false);
+    await handleRemoveItem(deleteTarget.item_no);
+    setDeleteTarget(null);
+  };
+
   // ── RESTOCK ──────────────────────────────────────────────────────────────
   const handleRestock = async () => {
     if (!selectedItem || !restockAmount) {
@@ -290,7 +401,6 @@ export function InventoryPage() {
     setActionLoading(true);
 
     try {
-      // Step 1: Record delivery in the deliveries table
       const deliveryDate =
         resupplyDate || new Date().toISOString().split("T")[0];
       const { error: deliveryError } = await supabase
@@ -302,25 +412,19 @@ export function InventoryPage() {
         });
 
       if (deliveryError) {
-        const errorMsg = deliveryError.message || "Failed to record delivery";
-        toast.error(errorMsg);
+        toast.error(deliveryError.message || "Failed to record delivery");
         console.error("Delivery Error:", deliveryError);
-        setActionLoading(false);
         return;
       }
 
-      // Step 2: Update inventory stock
       const { error: inventoryError } = await supabase
         .from("inventory")
         .update({ remaining_stock: selectedItem.remaining_stock + amount })
         .eq("item_no", selectedItem.item_no);
 
       if (inventoryError) {
-        const errorMsg =
-          inventoryError.message || "Failed to update inventory stock";
-        toast.error(errorMsg);
+        toast.error(inventoryError.message || "Failed to update inventory stock");
         console.error("Inventory Error:", inventoryError);
-        setActionLoading(false);
         return;
       }
 
@@ -384,18 +488,16 @@ export function InventoryPage() {
 
   // Real-time check for duplicate Item ID
   const checkItemIdExists = (
-    prefix: string,
+    prefix: "JMS" | "GYM-S",
     number: string,
     letter: string,
+    currentItemId = "",
   ) => {
     if (number) {
-      let testId = "";
-      if (prefix === "JMS") {
-        testId = `JMS${number}${letter.toUpperCase()}`;
-      } else {
-        testId = `GYM-S-${number}${letter.toUpperCase()}`;
-      }
-      const exists = inventory.some((item) => item.item_no === testId);
+      const testId = buildItemNo(prefix, number, letter);
+      const exists = inventory.some(
+        (item) => item.item_no === testId && item.item_no !== currentItemId,
+      );
       setItemIdExists(exists);
     } else {
       setItemIdExists(false);
@@ -403,10 +505,12 @@ export function InventoryPage() {
   };
 
   // Real-time check for duplicate Item Name
-  const checkItemNameExists = (description: string) => {
+  const checkItemNameExists = (description: string, currentItemNo = "") => {
     if (description.trim()) {
       const exists = inventory.some(
-        (item) => item.description.toLowerCase() === description.toLowerCase(),
+        (item) =>
+          item.description.toLowerCase() === description.toLowerCase() &&
+          item.item_no !== currentItemNo,
       );
       setItemNameExists(exists);
     } else {
@@ -449,15 +553,7 @@ export function InventoryPage() {
       item.item_no.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory =
       categoryFilter === "all" || item.unit === categoryFilter;
-    const matchesStock =
-      stockFilter === "all" ||
-      (stockFilter === "low" &&
-        item.minimum_stock &&
-        item.remaining_stock < item.minimum_stock) ||
-      (stockFilter === "adequate" &&
-        item.minimum_stock &&
-        item.remaining_stock >= item.minimum_stock);
-    return matchesSearch && matchesCategory && matchesStock;
+    return matchesSearch && matchesCategory;
   });
 
   const totalItems = inventory.reduce(
@@ -479,7 +575,6 @@ export function InventoryPage() {
 
   const getSortedInventory = (items: InventoryItem[]) => {
     const sorted = [...items];
-
     switch (sortOption) {
       case "name-az":
         return sorted.sort((a, b) =>
@@ -605,9 +700,7 @@ export function InventoryPage() {
               <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-600">
-                      Total Items in Stock
-                    </p>
+                    <p className="text-sm text-gray-600">Total Items in Stock</p>
                     <p className="text-2xl font-bold text-gray-900 mt-1">
                       {loading ? "..." : totalItems}
                     </p>
@@ -634,7 +727,7 @@ export function InventoryPage() {
 
             {/* Filters */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Search
@@ -665,20 +758,6 @@ export function InventoryPage() {
                         {cat}
                       </option>
                     ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Stock Level
-                  </label>
-                  <select
-                    value={stockFilter}
-                    onChange={(e) => setStockFilter(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
-                  >
-                    <option value="all">All Levels</option>
-                    <option value="low">Low Stock</option>
-                    <option value="adequate">Adequate Stock</option>
                   </select>
                 </div>
                 <div>
@@ -741,19 +820,13 @@ export function InventoryPage() {
                   <tbody className="divide-y divide-gray-200">
                     {loading ? (
                       <tr>
-                        <td
-                          colSpan={5}
-                          className="px-6 py-12 text-center text-gray-400"
-                        >
+                        <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
                           Loading inventory...
                         </td>
                       </tr>
                     ) : filteredInventory.length === 0 ? (
                       <tr>
-                        <td
-                          colSpan={5}
-                          className="px-6 py-12 text-center text-gray-400"
-                        >
+                        <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
                           <Package className="w-12 h-12 mx-auto mb-4 opacity-30" />
                           <p>No items found</p>
                         </td>
@@ -792,9 +865,7 @@ export function InventoryPage() {
                                   <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
                                     <div
                                       className={`h-1.5 rounded-full ${percentage < 30 ? "bg-red-600" : percentage < 60 ? "bg-orange-500" : "bg-green-500"}`}
-                                      style={{
-                                        width: `${Math.min(percentage, 100)}%`,
-                                      }}
+                                      style={{ width: `${Math.min(percentage, 100)}%` }}
                                     />
                                   </div>
                                 </>
@@ -831,9 +902,7 @@ export function InventoryPage() {
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
                   <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                    <h3 className="text-xl font-bold text-gray-900">
-                      Restock Item
-                    </h3>
+                    <h3 className="text-xl font-bold text-gray-900">Restock Item</h3>
                     <button
                       onClick={() => setShowRestockModal(false)}
                       className="text-gray-400 hover:text-gray-600"
@@ -847,9 +916,7 @@ export function InventoryPage() {
                       <div className="font-semibold text-gray-900">
                         {selectedItem.description}
                       </div>
-                      <div className="text-sm text-gray-600 mt-2">
-                        Current Stock
-                      </div>
+                      <div className="text-sm text-gray-600 mt-2">Current Stock</div>
                       <div className="text-2xl font-bold text-gray-900">
                         {selectedItem.remaining_stock} {selectedItem.unit}
                       </div>
@@ -863,10 +930,7 @@ export function InventoryPage() {
                         value={restockAmount}
                         onChange={(e) => {
                           const value = e.target.value;
-                          if (
-                            value === "" ||
-                            (/^\d+$/.test(value) && parseInt(value) > 0)
-                          ) {
+                          if (value === "" || (/^\d+$/.test(value) && parseInt(value) > 0)) {
                             setRestockAmount(value);
                           }
                         }}
@@ -879,8 +943,7 @@ export function InventoryPage() {
                         <div className="text-sm text-blue-800">
                           New stock level will be:{" "}
                           <span className="font-bold">
-                            {selectedItem.remaining_stock +
-                              parseInt(restockAmount)}{" "}
+                            {selectedItem.remaining_stock + parseInt(restockAmount)}{" "}
                             {selectedItem.unit}
                           </span>
                         </div>
@@ -906,14 +969,48 @@ export function InventoryPage() {
               </div>
             )}
 
+            {/* Delete Confirmation Modal */}
+            {showDeleteModal && deleteTarget && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-60 p-4">
+                <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden">
+                  <div className="p-6 border-b border-gray-200">
+                    <h3 className="text-xl font-bold text-gray-900">Confirm Delete</h3>
+                    <p className="mt-3 text-sm text-gray-600">
+                      Are you sure you want to remove "{deleteTarget.description}" from
+                      inventory? This will also delete all related requests, deliveries,
+                      and history.
+                    </p>
+                  </div>
+                  <div className="p-6 flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDeleteModal(false);
+                        setDeleteTarget(null);
+                      }}
+                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmRemoveItem}
+                      disabled={actionLoading}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {actionLoading ? "Removing..." : "Remove Item"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Update Inventory Modal */}
             {showUpdateModal && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
                 <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
                   <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                    <h3 className="text-xl font-bold text-gray-900">
-                      Update Inventory
-                    </h3>
+                    <h3 className="text-xl font-bold text-gray-900">Update Inventory</h3>
                     <button
                       onClick={() => setShowUpdateModal(false)}
                       className="text-gray-400 hover:text-gray-600"
@@ -942,33 +1039,21 @@ export function InventoryPage() {
                             : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
                         }`}
                       >
-                        {mode === "add" && (
-                          <>
-                            <Plus className="w-5 h-5" /> Add New Item
-                          </>
-                        )}
-                        {mode === "edit" && (
-                          <>
-                            <Edit className="w-5 h-5" /> Edit/Adjust Items
-                          </>
-                        )}
-                        {mode === "remove" && (
-                          <>
-                            <Trash2 className="w-5 h-5" /> Remove Items
-                          </>
-                        )}
+                        {mode === "add" && <><Plus className="w-5 h-5" /> Add New Item</>}
+                        {mode === "edit" && <><Edit className="w-5 h-5" /> Edit/Adjust Items</>}
+                        {mode === "remove" && <><Trash2 className="w-5 h-5" /> Remove Items</>}
                       </button>
                     ))}
                   </div>
 
                   <div className="overflow-y-auto" style={{ height: "500px" }}>
+
                     {/* ADD TAB */}
                     {updateMode === "add" && (
                       <div className="p-6 space-y-6">
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                           <p className="text-sm text-blue-800">
-                            Add a new item to your inventory. Fill in all
-                            required fields marked with *.
+                            Add a new item to your inventory. Fill in all required fields marked with *.
                           </p>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -980,15 +1065,9 @@ export function InventoryPage() {
                               <select
                                 value={itemIdPrefix}
                                 onChange={(e) => {
-                                  const newPrefix = e.target.value as
-                                    | "JMS"
-                                    | "GYM-S";
+                                  const newPrefix = e.target.value as "JMS" | "GYM-S";
                                   setItemIdPrefix(newPrefix);
-                                  checkItemIdExists(
-                                    newPrefix,
-                                    itemIdNumber,
-                                    itemIdLetter,
-                                  );
+                                  checkItemIdExists(newPrefix, itemIdNumber, itemIdLetter);
                                 }}
                                 className="px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] font-semibold text-gray-900 cursor-pointer transition-colors hover:border-gray-400"
                               >
@@ -1002,11 +1081,7 @@ export function InventoryPage() {
                                   const value = e.target.value;
                                   if (value === "" || /^\d{0,3}$/.test(value)) {
                                     setItemIdNumber(value);
-                                    checkItemIdExists(
-                                      itemIdPrefix,
-                                      value,
-                                      itemIdLetter,
-                                    );
+                                    checkItemIdExists(itemIdPrefix, value, itemIdLetter);
                                   }
                                 }}
                                 placeholder="000"
@@ -1017,16 +1092,10 @@ export function InventoryPage() {
                                 type="text"
                                 value={itemIdLetter}
                                 onChange={(e) => {
-                                  const value = e.target.value
-                                    .toUpperCase()
-                                    .slice(0, 1);
+                                  const value = e.target.value.toUpperCase().slice(0, 1);
                                   if (value === "" || /^[A-Z]$/.test(value)) {
                                     setItemIdLetter(value);
-                                    checkItemIdExists(
-                                      itemIdPrefix,
-                                      itemIdNumber,
-                                      value,
-                                    );
+                                    checkItemIdExists(itemIdPrefix, itemIdNumber, value);
                                   }
                                 }}
                                 placeholder="A"
@@ -1052,17 +1121,12 @@ export function InventoryPage() {
                               type="text"
                               value={newItem.description}
                               onChange={(e) => {
-                                setNewItem({
-                                  ...newItem,
-                                  description: e.target.value,
-                                });
+                                setNewItem({ ...newItem, description: e.target.value });
                                 checkItemNameExists(e.target.value);
                               }}
                               placeholder="e.g., Whiteboard Marker"
                               className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent ${
-                                itemNameExists
-                                  ? "border-red-500 focus:ring-red-500"
-                                  : "border-gray-300"
+                                itemNameExists ? "border-red-500 focus:ring-red-500" : "border-gray-300"
                               }`}
                             />
                             {itemNameExists && (
@@ -1078,9 +1142,7 @@ export function InventoryPage() {
                             <input
                               type="text"
                               value={newItem.unit}
-                              onChange={(e) =>
-                                setNewItem({ ...newItem, unit: e.target.value })
-                              }
+                              onChange={(e) => setNewItem({ ...newItem, unit: e.target.value })}
                               placeholder="e.g., pcs, boxes, reams"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                             />
@@ -1094,14 +1156,10 @@ export function InventoryPage() {
                               value={newItem.remaining_stock}
                               onChange={(e) => {
                                 const value = e.target.value;
-                                if (
-                                  value === "" ||
-                                  (/^\d+$/.test(value) && parseInt(value) >= 0)
-                                ) {
+                                if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
                                   setNewItem({
                                     ...newItem,
-                                    remaining_stock:
-                                      value === "" ? "" : parseInt(value),
+                                    remaining_stock: value === "" ? "" : parseInt(value),
                                   });
                                 }
                               }}
@@ -1123,14 +1181,10 @@ export function InventoryPage() {
                               value={newItem.minimum_stock}
                               onChange={(e) => {
                                 const value = e.target.value;
-                                if (
-                                  value === "" ||
-                                  (/^\d+$/.test(value) && parseInt(value) >= 0)
-                                ) {
+                                if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
                                   setNewItem({
                                     ...newItem,
-                                    minimum_stock:
-                                      value === "" ? "" : parseInt(value),
+                                    minimum_stock: value === "" ? "" : parseInt(value),
                                   });
                                 }
                               }}
@@ -1152,9 +1206,7 @@ export function InventoryPage() {
                             className="px-6 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors flex items-center gap-2 disabled:opacity-50"
                           >
                             <Plus className="w-5 h-5" />
-                            {actionLoading
-                              ? "Adding..."
-                              : "Add Item to Inventory"}
+                            {actionLoading ? "Adding..." : "Add Item to Inventory"}
                           </button>
                         </div>
                       </div>
@@ -1165,8 +1217,7 @@ export function InventoryPage() {
                       <div className="p-6 space-y-6">
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                           <p className="text-sm text-blue-800">
-                            Select an item to edit its details or adjust
-                            quantity.
+                            Select an item to edit its details or adjust quantity.
                           </p>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1177,9 +1228,7 @@ export function InventoryPage() {
                             <input
                               type="text"
                               value={editSearchItemNo}
-                              onChange={(e) =>
-                                setEditSearchItemNo(e.target.value)
-                              }
+                              onChange={(e) => setEditSearchItemNo(e.target.value)}
                               placeholder="e.g., JMS010"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                             />
@@ -1191,9 +1240,7 @@ export function InventoryPage() {
                             <input
                               type="text"
                               value={editSearchDescription}
-                              onChange={(e) =>
-                                setEditSearchDescription(e.target.value)
-                              }
+                              onChange={(e) => setEditSearchDescription(e.target.value)}
                               placeholder="e.g., Air Freshener"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                             />
@@ -1202,9 +1249,7 @@ export function InventoryPage() {
                         {inventory.length === 0 ? (
                           <div className="p-12 text-center">
                             <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                            <p className="text-gray-600">
-                              No items in inventory yet
-                            </p>
+                            <p className="text-gray-600">No items in inventory yet</p>
                           </div>
                         ) : (
                           <div className="space-y-3">
@@ -1212,26 +1257,73 @@ export function InventoryPage() {
                               .filter(
                                 (item) =>
                                   (editSearchItemNo === "" ||
-                                    item.item_no
-                                      .toLowerCase()
-                                      .includes(
-                                        editSearchItemNo.toLowerCase(),
-                                      )) &&
+                                    item.item_no.toLowerCase().includes(editSearchItemNo.toLowerCase())) &&
                                   (editSearchDescription === "" ||
-                                    item.description
-                                      .toLowerCase()
-                                      .includes(
-                                        editSearchDescription.toLowerCase(),
-                                      )),
+                                    item.description.toLowerCase().includes(editSearchDescription.toLowerCase())),
                               )
                               .map((item) => (
                                 <div
                                   key={item.item_no}
                                   className="border border-gray-200 rounded-lg p-4 hover:border-[#4A89B0] transition-colors"
                                 >
-                                  {editingItem?.item_no === item.item_no ? (
+                                  {editingItem && editOriginalItemNo === item.item_no ? (
                                     <div className="space-y-4">
                                       <div className="grid grid-cols-2 gap-4">
+                                        <div className="col-span-2">
+                                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                                            Item ID *
+                                          </label>
+                                          <div className="flex gap-2 items-center">
+                                            <select
+                                              value={itemIdPrefix}
+                                              onChange={(e) => {
+                                                const newPrefix = e.target.value as "JMS" | "GYM-S";
+                                                setItemIdPrefix(newPrefix);
+                                                checkItemIdExists(newPrefix, itemIdNumber, itemIdLetter, editOriginalItemNo);
+                                              }}
+                                              className="px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm"
+                                            >
+                                              <option value="JMS">JMS</option>
+                                              <option value="GYM-S">GYM-S</option>
+                                            </select>
+                                            <input
+                                              type="text"
+                                              value={itemIdNumber}
+                                              onChange={(e) => {
+                                                const value = e.target.value;
+                                                if (value === "" || /^\d{0,3}$/.test(value)) {
+                                                  setItemIdNumber(value);
+                                                  checkItemIdExists(itemIdPrefix, value, itemIdLetter, editOriginalItemNo);
+                                                }
+                                              }}
+                                              maxLength={3}
+                                              placeholder="000"
+                                              className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm"
+                                            />
+                                            <input
+                                              type="text"
+                                              value={itemIdLetter}
+                                              onChange={(e) => {
+                                                const value = e.target.value.toUpperCase().slice(0, 1);
+                                                if (value === "" || /^[A-Z]$/.test(value)) {
+                                                  setItemIdLetter(value);
+                                                  checkItemIdExists(itemIdPrefix, itemIdNumber, value, editOriginalItemNo);
+                                                }
+                                              }}
+                                              maxLength={1}
+                                              placeholder="A"
+                                              className="w-12 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm uppercase"
+                                            />
+                                            <span className="text-sm text-gray-500 font-mono bg-gray-100 px-3 py-2 rounded-lg">
+                                              → {buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter)}
+                                            </span>
+                                          </div>
+                                          {itemIdExists && (
+                                            <p className="text-xs text-red-600 mt-1 font-medium">
+                                              ⚠ Item ID {buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter)} already exists
+                                            </p>
+                                          )}
+                                        </div>
                                         <div>
                                           <label className="block text-xs font-medium text-gray-700 mb-1">
                                             Name
@@ -1240,10 +1332,7 @@ export function InventoryPage() {
                                             type="text"
                                             value={editingItem.description}
                                             onChange={(e) =>
-                                              setEditingItem({
-                                                ...editingItem,
-                                                description: e.target.value,
-                                              })
+                                              setEditingItem({ ...editingItem, description: e.target.value })
                                             }
                                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
                                           />
@@ -1256,10 +1345,7 @@ export function InventoryPage() {
                                             type="text"
                                             value={editingItem.unit}
                                             onChange={(e) =>
-                                              setEditingItem({
-                                                ...editingItem,
-                                                unit: e.target.value,
-                                              })
+                                              setEditingItem({ ...editingItem, unit: e.target.value })
                                             }
                                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
                                           />
@@ -1273,17 +1359,10 @@ export function InventoryPage() {
                                             value={editingItem.remaining_stock}
                                             onChange={(e) => {
                                               const value = e.target.value;
-                                              if (
-                                                value === "" ||
-                                                (/^\d+$/.test(value) &&
-                                                  parseInt(value) >= 0)
-                                              ) {
+                                              if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
                                                 setEditingItem({
                                                   ...editingItem,
-                                                  remaining_stock:
-                                                    value === ""
-                                                      ? ""
-                                                      : parseInt(value),
+                                                  remaining_stock: value === "" ? "" : parseInt(value),
                                                 });
                                               }
                                             }}
@@ -1296,20 +1375,13 @@ export function InventoryPage() {
                                           </label>
                                           <input
                                             type="text"
-                                            value={editingItem.minimum_stock}
+                                            value={editingItem.minimum_stock ?? ""}
                                             onChange={(e) => {
                                               const value = e.target.value;
-                                              if (
-                                                value === "" ||
-                                                (/^\d+$/.test(value) &&
-                                                  parseInt(value) >= 0)
-                                              ) {
+                                              if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
                                                 setEditingItem({
                                                   ...editingItem,
-                                                  minimum_stock:
-                                                    value === ""
-                                                      ? ""
-                                                      : parseInt(value),
+                                                  minimum_stock: value === "" ? "" : parseInt(value),
                                                 });
                                               }
                                             }}
@@ -1324,12 +1396,14 @@ export function InventoryPage() {
                                           className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 disabled:opacity-50"
                                         >
                                           <Save className="w-4 h-4" />
-                                          {actionLoading
-                                            ? "Saving..."
-                                            : "Save Changes"}
+                                          {actionLoading ? "Saving..." : "Save Changes"}
                                         </button>
                                         <button
-                                          onClick={() => setEditingItem(null)}
+                                          onClick={() => {
+                                            setEditingItem(null);
+                                            setEditOriginalItemNo("");
+                                            setItemIdExists(false);
+                                          }}
                                           className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
                                         >
                                           Cancel
@@ -1348,19 +1422,21 @@ export function InventoryPage() {
                                           </p>
                                         </div>
                                         <button
-                                          onClick={() =>
+                                          onClick={() => {
+                                            const parsed = parseItemNo(item.item_no);
+                                            setItemIdPrefix(parsed.prefix);
+                                            setItemIdNumber(parsed.number);
+                                            setItemIdLetter(parsed.letter);
+                                            setEditOriginalItemNo(item.item_no);
+                                            setItemIdExists(false);
                                             setEditingItem({
                                               ...item,
                                               remaining_stock:
-                                                item.remaining_stock === 0
-                                                  ? ""
-                                                  : item.remaining_stock,
+                                                item.remaining_stock === 0 ? "" : item.remaining_stock,
                                               minimum_stock:
-                                                item.minimum_stock === 0
-                                                  ? ""
-                                                  : item.minimum_stock,
-                                            } as EditableInventoryItem)
-                                          }
+                                                item.minimum_stock === 0 ? "" : item.minimum_stock,
+                                            } as EditableInventoryItem);
+                                          }}
                                           className="px-3 py-1 bg-[#4A89B0] text-white text-sm rounded-lg hover:bg-[#3776A0] flex items-center gap-1"
                                         >
                                           <Edit className="w-4 h-4" /> Edit
@@ -1368,33 +1444,24 @@ export function InventoryPage() {
                                       </div>
                                       <div className="grid grid-cols-2 gap-4 mb-3">
                                         <div>
-                                          <p className="text-xs text-gray-500">
-                                            Current Stock
-                                          </p>
+                                          <p className="text-xs text-gray-500">Current Stock</p>
                                           <p className="text-sm font-semibold">
                                             {item.remaining_stock} {item.unit}
                                           </p>
                                         </div>
                                         <div>
-                                          <p className="text-xs text-gray-500">
-                                            Minimum Stock
-                                          </p>
+                                          <p className="text-xs text-gray-500">Minimum Stock</p>
                                           <p className="text-sm font-semibold">
-                                            {item.minimum_stock ?? "—"}{" "}
-                                            {item.unit}
+                                            {item.minimum_stock ?? "—"} {item.unit}
                                           </p>
                                         </div>
                                       </div>
                                       <div className="flex items-center gap-2">
-                                        <span className="text-sm text-gray-600">
-                                          Quick Adjust:
-                                        </span>
+                                        <span className="text-sm text-gray-600">Quick Adjust:</span>
                                         {[-10, -1, 1, 10].map((adj) => (
                                           <button
                                             key={adj}
-                                            onClick={() =>
-                                              handleAdjustQuantity(item, adj)
-                                            }
+                                            onClick={() => handleAdjustQuantity(item, adj)}
                                             className={`px-3 py-1 text-sm rounded ${adj < 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-green-100 text-green-700 hover:bg-green-200"}`}
                                           >
                                             {adj > 0 ? `+${adj}` : adj}
@@ -1415,9 +1482,8 @@ export function InventoryPage() {
                       <div className="p-6 space-y-6">
                         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                           <p className="text-sm text-red-800">
-                            <strong>Warning:</strong> Removing items permanently
-                            deletes them from your inventory. This cannot be
-                            undone.
+                            <strong>Warning:</strong> Removing items permanently deletes them
+                            from your inventory. This cannot be undone.
                           </p>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1428,9 +1494,7 @@ export function InventoryPage() {
                             <input
                               type="text"
                               value={removeSearchItemNo}
-                              onChange={(e) =>
-                                setRemoveSearchItemNo(e.target.value)
-                              }
+                              onChange={(e) => setRemoveSearchItemNo(e.target.value)}
                               placeholder="e.g., JMS010"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                             />
@@ -1442,9 +1506,7 @@ export function InventoryPage() {
                             <input
                               type="text"
                               value={removeSearchDescription}
-                              onChange={(e) =>
-                                setRemoveSearchDescription(e.target.value)
-                              }
+                              onChange={(e) => setRemoveSearchDescription(e.target.value)}
                               placeholder="e.g., Air Freshener"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                             />
@@ -1461,17 +1523,9 @@ export function InventoryPage() {
                               .filter(
                                 (item) =>
                                   (removeSearchItemNo === "" ||
-                                    item.item_no
-                                      .toLowerCase()
-                                      .includes(
-                                        removeSearchItemNo.toLowerCase(),
-                                      )) &&
+                                    item.item_no.toLowerCase().includes(removeSearchItemNo.toLowerCase())) &&
                                   (removeSearchDescription === "" ||
-                                    item.description
-                                      .toLowerCase()
-                                      .includes(
-                                        removeSearchDescription.toLowerCase(),
-                                      )),
+                                    item.description.toLowerCase().includes(removeSearchDescription.toLowerCase())),
                               )
                               .map((item) => (
                                 <div
@@ -1486,14 +1540,11 @@ export function InventoryPage() {
                                       {item.item_no}
                                     </p>
                                     <p className="text-sm text-gray-600">
-                                      {item.unit} • {item.remaining_stock} in
-                                      stock
+                                      {item.unit} • {item.remaining_stock} in stock
                                     </p>
                                   </div>
                                   <button
-                                    onClick={() =>
-                                      handleRemoveItem(item.item_no)
-                                    }
+                                    onClick={() => requestRemoveItem(item)}
                                     disabled={actionLoading}
                                     className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
                                   >
