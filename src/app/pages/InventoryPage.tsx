@@ -29,7 +29,10 @@ interface InventoryItem {
   minimum_stock?: number;
 }
 
-type EditableInventoryItem = Omit<InventoryItem, "remaining_stock" | "minimum_stock"> & {
+type EditableInventoryItem = Omit<
+  InventoryItem,
+  "remaining_stock" | "minimum_stock"
+> & {
   remaining_stock: number | "";
   minimum_stock: number | "" | undefined;
 };
@@ -78,7 +81,9 @@ export function InventoryPage() {
   const [updateMode, setUpdateMode] = useState<"add" | "edit" | "remove">(
     "add",
   );
-  const [editingItem, setEditingItem] = useState<EditableInventoryItem | null>(null);
+  const [editingItem, setEditingItem] = useState<EditableInventoryItem | null>(
+    null,
+  );
   const [editSearchItemNo, setEditSearchItemNo] = useState("");
   const [editSearchDescription, setEditSearchDescription] = useState("");
   const [removeSearchItemNo, setRemoveSearchItemNo] = useState("");
@@ -1095,7 +1100,8 @@ export function InventoryPage() {
                                 ) {
                                   setNewItem({
                                     ...newItem,
-                                    remaining_stock: value === "" ? "" : parseInt(value),
+                                    remaining_stock:
+                                      value === "" ? "" : parseInt(value),
                                   });
                                 }
                               }}
