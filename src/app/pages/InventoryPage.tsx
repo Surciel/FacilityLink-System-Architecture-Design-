@@ -29,6 +29,19 @@ interface InventoryItem {
   minimum_stock?: number;
 }
 
+type EditableInventoryItem = Omit<InventoryItem, "remaining_stock" | "minimum_stock"> & {
+  remaining_stock: number | "";
+  minimum_stock: number | "" | undefined;
+};
+
+type NewItemForm = {
+  item_no: string;
+  description: string;
+  unit: string;
+  remaining_stock: number | "";
+  minimum_stock: number | "";
+};
+
 export function InventoryPage() {
   const navigate = useNavigate();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -65,17 +78,22 @@ export function InventoryPage() {
   const [updateMode, setUpdateMode] = useState<"add" | "edit" | "remove">(
     "add",
   );
-  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [editingItem, setEditingItem] = useState<EditableInventoryItem | null>(null);
   const [editSearchItemNo, setEditSearchItemNo] = useState("");
   const [editSearchDescription, setEditSearchDescription] = useState("");
   const [removeSearchItemNo, setRemoveSearchItemNo] = useState("");
   const [removeSearchDescription, setRemoveSearchDescription] = useState("");
-  const [newItem, setNewItem] = useState({
+  const [itemIdPrefix, setItemIdPrefix] = useState<"JMS" | "GYM-S">("JMS");
+  const [itemIdNumber, setItemIdNumber] = useState("");
+  const [itemIdLetter, setItemIdLetter] = useState("");
+  const [itemIdExists, setItemIdExists] = useState(false);
+  const [itemNameExists, setItemNameExists] = useState(false);
+  const [newItem, setNewItem] = useState<NewItemForm>({
     item_no: "",
     description: "",
     unit: "",
-    remaining_stock: 0,
-    minimum_stock: 0,
+    remaining_stock: "",
+    minimum_stock: "",
   });
 
   useEffect(() => {
@@ -108,18 +126,48 @@ export function InventoryPage() {
 
   // ── ADD ──────────────────────────────────────────────────────────────────
   const handleAddItem = async () => {
-    if (!newItem.item_no || !newItem.description || !newItem.unit) {
+    if (!itemIdNumber || !newItem.description || !newItem.unit) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+
+    if (itemIdNumber.length !== 3) {
+      toast.error("Item number must be exactly 3 digits");
+      return;
+    }
+
+    // Build final item number based on prefix
+    let finalItemNo = "";
+    if (itemIdPrefix === "JMS") {
+      finalItemNo = `JMS${itemIdNumber}${itemIdLetter.toUpperCase()}`;
+    } else {
+      finalItemNo = `GYM-S-${itemIdNumber}${itemIdLetter.toUpperCase()}`;
+    }
+
+    // Check if item already exists
+    if (itemIdExists) {
+      toast.error(
+        `Item ID ${finalItemNo} already exists. Please use a different combination.`,
+      );
+      return;
+    }
+
+    // Check if item name already exists
+    if (itemNameExists) {
+      toast.error(
+        `An item with the name "${newItem.description}" already exists in inventory.`,
+      );
       return;
     }
 
     setActionLoading(true);
     const { error } = await supabase.from("inventory").insert({
-      item_no: newItem.item_no,
+      item_no: finalItemNo,
       description: newItem.description,
       unit: newItem.unit,
-      remaining_stock: newItem.remaining_stock,
-      minimum_stock: newItem.minimum_stock,
+      remaining_stock:
+        newItem.remaining_stock === "" ? 0 : newItem.remaining_stock,
+      minimum_stock: newItem.minimum_stock === "" ? 0 : newItem.minimum_stock,
     });
 
     if (error) {
@@ -135,9 +183,13 @@ export function InventoryPage() {
         item_no: "",
         description: "",
         unit: "",
-        remaining_stock: 0,
-        minimum_stock: 0,
+        remaining_stock: "",
+        minimum_stock: "",
       });
+      setItemIdPrefix("JMS");
+      setItemIdNumber("");
+      setItemIdLetter("");
+      setItemIdExists(false);
       setShowUpdateModal(false);
       fetchInventory();
     }
@@ -154,8 +206,14 @@ export function InventoryPage() {
       .update({
         description: editingItem.description,
         unit: editingItem.unit,
-        remaining_stock: editingItem.remaining_stock,
-        minimum_stock: editingItem.minimum_stock,
+        remaining_stock:
+          typeof editingItem.remaining_stock === "string"
+            ? parseInt(editingItem.remaining_stock) || 0
+            : editingItem.remaining_stock,
+        minimum_stock:
+          typeof editingItem.minimum_stock === "string"
+            ? parseInt(editingItem.minimum_stock) || 0
+            : editingItem.minimum_stock,
       })
       .eq("item_no", editingItem.item_no);
 
@@ -173,41 +231,43 @@ export function InventoryPage() {
 
   // ── REMOVE ───────────────────────────────────────────────────────────────
   const handleRemoveItem = async (itemId: string) => {
-  const item = inventory.find((i) => i.item_no === itemId);
-  if (!item) return;
+    const item = inventory.find((i) => i.item_no === itemId);
+    if (!item) return;
 
-  if (
-    !confirm(
-      `Are you sure you want to remove "${item.description}" from inventory? This will also delete all related requests, deliveries, and history.`,
+    if (
+      !confirm(
+        `Are you sure you want to remove "${item.description}" from inventory? This will also delete all related requests, deliveries, and history.`,
+      )
     )
-  )
-    return;
+      return;
 
-  setActionLoading(true);
-  try {
-    await supabase.from("requests").delete().eq("item_no", itemId);
-    await supabase.from("deliveries").delete().eq("item_no", itemId);
-    await supabase.from("inventory_history").delete().eq("item_no", itemId);
+    setActionLoading(true);
+    try {
+      await supabase.from("requests").delete().eq("item_no", itemId);
+      await supabase.from("deliveries").delete().eq("item_no", itemId);
+      await supabase.from("inventory_history").delete().eq("item_no", itemId);
 
-    const { error } = await supabase
-      .from("inventory")
-      .delete()
-      .eq("item_no", itemId);
+      const { error } = await supabase
+        .from("inventory")
+        .delete()
+        .eq("item_no", itemId);
 
-    if (error) {
-      toast.error("Failed to remove item: " + error.message);
-      console.error(error);
-    } else {
-      toast.success(`Successfully removed ${item.description} from inventory`);
-      fetchInventory();
+      if (error) {
+        toast.error("Failed to remove item: " + error.message);
+        console.error(error);
+      } else {
+        toast.success(
+          `Successfully removed ${item.description} from inventory`,
+        );
+        fetchInventory();
+      }
+    } catch (err) {
+      toast.error("An error occurred while removing the item");
+      console.error(err);
+    } finally {
+      setActionLoading(false);
     }
-  } catch (err) {
-    toast.error("An error occurred while removing the item");
-    console.error(err);
-  } finally {
-    setActionLoading(false);
-  }
-};
+  };
 
   // ── RESTOCK ──────────────────────────────────────────────────────────────
   const handleRestock = async () => {
@@ -306,9 +366,46 @@ export function InventoryPage() {
         item_no: "",
         description: "",
         unit: "",
-        remaining_stock: 0,
-        minimum_stock: 0,
+        remaining_stock: "",
+        minimum_stock: "",
       });
+      setItemIdPrefix("JMS");
+      setItemIdNumber("");
+      setItemIdLetter("");
+      setItemIdExists(false);
+      setItemNameExists(false);
+    }
+  };
+
+  // Real-time check for duplicate Item ID
+  const checkItemIdExists = (
+    prefix: string,
+    number: string,
+    letter: string,
+  ) => {
+    if (number) {
+      let testId = "";
+      if (prefix === "JMS") {
+        testId = `JMS${number}${letter.toUpperCase()}`;
+      } else {
+        testId = `GYM-S-${number}${letter.toUpperCase()}`;
+      }
+      const exists = inventory.some((item) => item.item_no === testId);
+      setItemIdExists(exists);
+    } else {
+      setItemIdExists(false);
+    }
+  };
+
+  // Real-time check for duplicate Item Name
+  const checkItemNameExists = (description: string) => {
+    if (description.trim()) {
+      const exists = inventory.some(
+        (item) => item.description.toLowerCase() === description.toLowerCase(),
+      );
+      setItemNameExists(exists);
+    } else {
+      setItemNameExists(false);
     }
   };
 
@@ -757,12 +854,19 @@ export function InventoryPage() {
                         Restock Amount *
                       </label>
                       <input
-                        type="number"
+                        type="text"
                         value={restockAmount}
-                        onChange={(e) => setRestockAmount(e.target.value)}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          if (
+                            value === "" ||
+                            (/^\d+$/.test(value) && parseInt(value) > 0)
+                          ) {
+                            setRestockAmount(value);
+                          }
+                        }}
                         placeholder="Enter quantity to add"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                        min="1"
                       />
                     </div>
                     {restockAmount && (
@@ -867,18 +971,73 @@ export function InventoryPage() {
                             <label className="block text-sm font-medium text-gray-700 mb-2">
                               Item ID *
                             </label>
-                            <input
-                              type="text"
-                              value={newItem.item_no}
-                              onChange={(e) =>
-                                setNewItem({
-                                  ...newItem,
-                                  item_no: e.target.value,
-                                })
-                              }
-                              placeholder="e.g., ITEM-12345"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                            />
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={itemIdPrefix}
+                                onChange={(e) => {
+                                  const newPrefix = e.target.value as
+                                    | "JMS"
+                                    | "GYM-S";
+                                  setItemIdPrefix(newPrefix);
+                                  checkItemIdExists(
+                                    newPrefix,
+                                    itemIdNumber,
+                                    itemIdLetter,
+                                  );
+                                }}
+                                className="px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] font-semibold text-gray-900 cursor-pointer transition-colors hover:border-gray-400"
+                              >
+                                <option value="JMS">JMS</option>
+                                <option value="GYM-S">GYM-S</option>
+                              </select>
+                              <input
+                                type="text"
+                                value={itemIdNumber}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  if (value === "" || /^\d{0,3}$/.test(value)) {
+                                    setItemIdNumber(value);
+                                    checkItemIdExists(
+                                      itemIdPrefix,
+                                      value,
+                                      itemIdLetter,
+                                    );
+                                  }
+                                }}
+                                placeholder="000"
+                                maxLength={3}
+                                className="w-20 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-center font-semibold text-gray-900 transition-colors hover:border-gray-400"
+                              />
+                              <input
+                                type="text"
+                                value={itemIdLetter}
+                                onChange={(e) => {
+                                  const value = e.target.value
+                                    .toUpperCase()
+                                    .slice(0, 1);
+                                  if (value === "" || /^[A-Z]$/.test(value)) {
+                                    setItemIdLetter(value);
+                                    checkItemIdExists(
+                                      itemIdPrefix,
+                                      itemIdNumber,
+                                      value,
+                                    );
+                                  }
+                                }}
+                                placeholder="A"
+                                maxLength={1}
+                                className="w-12 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-center font-semibold text-gray-900 transition-colors hover:border-gray-400 uppercase"
+                              />
+                            </div>
+                            {itemIdExists && (
+                              <p className="text-xs text-red-600 mt-1 font-medium">
+                                ⚠ Item ID{" "}
+                                {itemIdPrefix === "JMS"
+                                  ? `JMS${itemIdNumber}${itemIdLetter.toUpperCase()}`
+                                  : `GYM-S-${itemIdNumber}${itemIdLetter.toUpperCase()}`}{" "}
+                                already exists
+                              </p>
+                            )}
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -887,15 +1046,25 @@ export function InventoryPage() {
                             <input
                               type="text"
                               value={newItem.description}
-                              onChange={(e) =>
+                              onChange={(e) => {
                                 setNewItem({
                                   ...newItem,
                                   description: e.target.value,
-                                })
-                              }
+                                });
+                                checkItemNameExists(e.target.value);
+                              }}
                               placeholder="e.g., Whiteboard Marker"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent ${
+                                itemNameExists
+                                  ? "border-red-500 focus:ring-red-500"
+                                  : "border-gray-300"
+                              }`}
                             />
+                            {itemNameExists && (
+                              <p className="text-red-500 text-sm mt-1">
+                                ⚠ An item with this name already exists
+                              </p>
+                            )}
                           </div>
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -916,18 +1085,22 @@ export function InventoryPage() {
                               Initial Stock *
                             </label>
                             <input
-                              type="number"
+                              type="text"
                               value={newItem.remaining_stock}
-                              onChange={(e) =>
-                                setNewItem({
-                                  ...newItem,
-                                  remaining_stock:
-                                    parseInt(e.target.value) || 0,
-                                })
-                              }
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                if (
+                                  value === "" ||
+                                  (/^\d+$/.test(value) && parseInt(value) >= 0)
+                                ) {
+                                  setNewItem({
+                                    ...newItem,
+                                    remaining_stock: value === "" ? "" : parseInt(value),
+                                  });
+                                }
+                              }}
                               placeholder="0"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                              min="0"
                             />
                           </div>
                           <div className="md:col-span-2">
@@ -940,17 +1113,23 @@ export function InventoryPage() {
                               </span>
                             </label>
                             <input
-                              type="number"
+                              type="text"
                               value={newItem.minimum_stock}
-                              onChange={(e) =>
-                                setNewItem({
-                                  ...newItem,
-                                  minimum_stock: parseInt(e.target.value) || 0,
-                                })
-                              }
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                if (
+                                  value === "" ||
+                                  (/^\d+$/.test(value) && parseInt(value) >= 0)
+                                ) {
+                                  setNewItem({
+                                    ...newItem,
+                                    minimum_stock:
+                                      value === "" ? "" : parseInt(value),
+                                  });
+                                }
+                              }}
                               placeholder="0"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                              min="0"
                             />
                           </div>
                         </div>
@@ -1084,17 +1263,25 @@ export function InventoryPage() {
                                             Current Stock
                                           </label>
                                           <input
-                                            type="number"
+                                            type="text"
                                             value={editingItem.remaining_stock}
-                                            onChange={(e) =>
-                                              setEditingItem({
-                                                ...editingItem,
-                                                remaining_stock:
-                                                  parseInt(e.target.value) || 0,
-                                              })
-                                            }
+                                            onChange={(e) => {
+                                              const value = e.target.value;
+                                              if (
+                                                value === "" ||
+                                                (/^\d+$/.test(value) &&
+                                                  parseInt(value) >= 0)
+                                              ) {
+                                                setEditingItem({
+                                                  ...editingItem,
+                                                  remaining_stock:
+                                                    value === ""
+                                                      ? ""
+                                                      : parseInt(value),
+                                                });
+                                              }
+                                            }}
                                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
-                                            min="0"
                                           />
                                         </div>
                                         <div>
@@ -1102,17 +1289,25 @@ export function InventoryPage() {
                                             Minimum Stock
                                           </label>
                                           <input
-                                            type="number"
+                                            type="text"
                                             value={editingItem.minimum_stock}
-                                            onChange={(e) =>
-                                              setEditingItem({
-                                                ...editingItem,
-                                                minimum_stock:
-                                                  parseInt(e.target.value) || 0,
-                                              })
-                                            }
+                                            onChange={(e) => {
+                                              const value = e.target.value;
+                                              if (
+                                                value === "" ||
+                                                (/^\d+$/.test(value) &&
+                                                  parseInt(value) >= 0)
+                                              ) {
+                                                setEditingItem({
+                                                  ...editingItem,
+                                                  minimum_stock:
+                                                    value === ""
+                                                      ? ""
+                                                      : parseInt(value),
+                                                });
+                                              }
+                                            }}
                                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
-                                            min="0"
                                           />
                                         </div>
                                       </div>
@@ -1147,7 +1342,19 @@ export function InventoryPage() {
                                           </p>
                                         </div>
                                         <button
-                                          onClick={() => setEditingItem(item)}
+                                          onClick={() =>
+                                            setEditingItem({
+                                              ...item,
+                                              remaining_stock:
+                                                item.remaining_stock === 0
+                                                  ? ""
+                                                  : item.remaining_stock,
+                                              minimum_stock:
+                                                item.minimum_stock === 0
+                                                  ? ""
+                                                  : item.minimum_stock,
+                                            } as EditableInventoryItem)
+                                          }
                                           className="px-3 py-1 bg-[#4A89B0] text-white text-sm rounded-lg hover:bg-[#3776A0] flex items-center gap-1"
                                         >
                                           <Edit className="w-4 h-4" /> Edit
