@@ -346,7 +346,6 @@ export function AnalyticsPage() {
       return monthNameToIndex[monthB] - monthNameToIndex[monthA];
     });
 
-    // Add current month to the list if not already present
     if (!uniqueMonths.includes(defaultMonthOption)) {
       uniqueMonths.unshift(defaultMonthOption);
     }
@@ -382,6 +381,19 @@ export function AnalyticsPage() {
           return;
         }
 
+        // ── FETCH descriptions from inventory table ──
+        const itemNos = historyItems.map((item) => item.item_no).filter(Boolean);
+        const { data: inventoryDescData } = await supabase
+          .from("inventory")
+          .select("item_no, description")
+          .in("item_no", itemNos);
+
+        // Build lookup map: item_no → description
+        const descriptionMap: Record<string, string> = {};
+        (inventoryDescData || []).forEach((inv) => {
+          descriptionMap[inv.item_no] = inv.description || "";
+        });
+
         const parts = ssmiMonthOption.split(" ");
         const monthName = parts[0];
         const yearStr = parts[parts.length - 1];
@@ -389,7 +401,6 @@ export function AnalyticsPage() {
         const year = parseInt(yearStr);
         const lastDay = new Date(year, monthIndex + 1, 0);
 
-        // ── Unit column REMOVED from bodyData ──
         const bodyData = historyItems.map((item) => {
           const w1 = item.week1 || 0;
           const w2 = item.week2 || 0;
@@ -401,10 +412,15 @@ export function AnalyticsPage() {
           const totalCost = totalQty * unitCost;
           const balanceOnHand = stockOnHand - totalQty;
 
+          // ── Use description from inventory table, fallback to history field ──
+          const description =
+            descriptionMap[item.item_no] ||
+            item.item_description ||
+            "";
+
           return [
             item.item_no || "",
-            item.item_description || "",
-            // unit removed
+            description,
             stockOnHand,
             w1 || "",
             w2 || "",
@@ -465,7 +481,6 @@ export function AnalyticsPage() {
                 rowSpan: 3,
                 styles: { valign: "middle", halign: "center" },
               },
-              // Unit header REMOVED
               {
                 content: "Stock Hand",
                 rowSpan: 3,
@@ -557,7 +572,6 @@ export function AnalyticsPage() {
           columnStyles: {
             0: { cellWidth: 24, halign: "center" },
             1: { cellWidth: 70 },
-            // column 2 is now Stock Hand (unit removed)
             2: { halign: "center" },
             3: { halign: "center" },
             4: { halign: "center" },
@@ -639,7 +653,6 @@ export function AnalyticsPage() {
 
       let historyData: any[] = [];
 
-      // Try to get data from inventory_history first
       const { data: historicalData } = await supabase
         .from("inventory_history")
         .select("*")
@@ -649,7 +662,6 @@ export function AnalyticsPage() {
       if (historicalData && historicalData.length > 0) {
         historyData = historicalData;
       } else {
-        // If no inventory_history data and it's the current month, fetch from requests table
         const isCurrentMonth =
           monthName === currentMonth && year === new Date().getFullYear();
         if (isCurrentMonth) {
@@ -662,7 +674,6 @@ export function AnalyticsPage() {
             .lte("created_at", lastDay.toISOString());
 
           if (requestsData && requestsData.length > 0) {
-            // Transform requests data to match inventory_history structure
             historyData = requestsData.map((req: any) => ({
               item_no: req.item_no || "",
               description: req.inventory?.description || "",
@@ -678,6 +689,19 @@ export function AnalyticsPage() {
         setGenerating(null);
         return;
       }
+
+      // ── FETCH descriptions from inventory table for all item_nos ──
+      const itemNos = historyData.map((item) => item.item_no).filter(Boolean);
+      const { data: inventoryDescData } = await supabase
+        .from("inventory")
+        .select("item_no, description")
+        .in("item_no", itemNos);
+
+      // Build lookup map: item_no → description
+      const descriptionMap: Record<string, string> = {};
+      (inventoryDescData || []).forEach((inv) => {
+        descriptionMap[inv.item_no] = inv.description || "";
+      });
 
       const doc = new jsPDF("portrait");
       doc.setFont("times");
@@ -748,23 +772,29 @@ export function AnalyticsPage() {
         },
       });
 
-      // ── Unit column REMOVED from bodyData and head ──
       const bodyData = historyData
         .sort((a, b) => (a.item_no || "").localeCompare(b.item_no || ""))
         .map((item) => {
           const weekKey = `week${risWeekOption.replace("week", "")}`;
           const quantity = item[weekKey] || 0;
+
+          // ── Use description from inventory table, fallback to row fields ──
+          const description =
+            descriptionMap[item.item_no] ||
+            item.description ||
+            item.item_description ||
+            "";
+
           return [
             item.item_no || "",
-            // unit removed
-            item.description || "",
+            description,
             quantity,
             quantity,
             "",
           ];
         })
         .filter((row) => {
-          const quantity = row[2]; // quantity now at index 2 (shifted)
+          const quantity = row[2];
           return quantity !== null && quantity !== 0 && quantity !== undefined;
         });
 
@@ -778,7 +808,6 @@ export function AnalyticsPage() {
               rowSpan: 2,
               styles: { halign: "center", valign: "middle" },
             },
-            // Unit header REMOVED
             {
               content: "Requisition",
               colSpan: 2,
@@ -812,10 +841,9 @@ export function AnalyticsPage() {
         },
         columnStyles: {
           0: { cellWidth: 25, halign: "center" },
-          // unit column removed — description now at index 1
           1: { cellWidth: 80 },
-          2: { halign: "center" }, // Quantity (requisition)
-          3: { halign: "center" }, // Quantity (issuance)
+          2: { halign: "center" },
+          3: { halign: "center" },
         },
       });
 
@@ -867,14 +895,12 @@ export function AnalyticsPage() {
       const monthIndex = now.getMonth();
       const year = now.getFullYear();
 
-      // Fetch inventory items for the facility
       const { data: inventoryData } = await supabase
         .from("inventory")
         .select("item_no, description, unit_cost, remaining_stock")
         .ilike("item_no", `${prefix}%`)
         .order("item_no", { ascending: true });
 
-      // Fetch deliveries for the current month
       const firstDay = new Date(year, monthIndex, 1);
       const lastDay = new Date(year, monthIndex + 1, 0);
       const { data: deliveriesData } = await supabase
@@ -883,14 +909,12 @@ export function AnalyticsPage() {
         .gte("delivery_date", getLocalISODate(firstDay))
         .lte("delivery_date", getLocalISODate(lastDay));
 
-      // Fetch requests for the current month
       const { data: requestsData } = await supabase
         .from("requests")
         .select("item_no, quantity_requested, created_at")
         .gte("created_at", firstDay.toISOString())
         .lte("created_at", lastDay.toISOString());
 
-      // Group deliveries and requests by item
       const deliveriesByItem: Record<string, number> = {};
       const requestsByItem: Record<string, number> = {};
 
@@ -912,7 +936,6 @@ export function AnalyticsPage() {
       const fetchStart = `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
       const fetchEnd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${lastDay.getDate()}`;
 
-      // Header
       doc
         .setFontSize(12)
         .text("Pamantasan ng Lungsod ng Maynila", pageWidth / 2, 12, {
@@ -925,9 +948,7 @@ export function AnalyticsPage() {
           "CURRENT MONTH TEST DATA - INVENTORY & DELIVERY VERIFICATION",
           pageWidth / 2,
           18,
-          {
-            align: "center",
-          },
+          { align: "center" },
         );
       doc
         .setFont("times", "normal")
@@ -941,12 +962,9 @@ export function AnalyticsPage() {
         `Facility: ${reportFacility === "JMS" ? "JMS Equipments" : "GYM Equipments"}`,
         pageWidth - 15,
         32,
-        {
-          align: "right",
-        },
+        { align: "right" },
       );
 
-      // Build table body - showing inventory flow
       const bodyData = (inventoryData || [])
         .map((item) => {
           const delivered = deliveriesByItem[item.item_no] || 0;
@@ -965,10 +983,7 @@ export function AnalyticsPage() {
             stockAfterRequest,
           ];
         })
-        .filter((row) => {
-          // Only show items with activity (delivered or requested)
-          return row[3] > 0 || row[5] > 0;
-        });
+        .filter((row) => row[3] > 0 || row[5] > 0);
 
       autoTable(doc, {
         head: [
@@ -1039,7 +1054,6 @@ export function AnalyticsPage() {
         },
       });
 
-      // Add summary section
       const totalDelivered = Object.values(deliveriesByItem).reduce(
         (a, b) => a + b,
         0,
