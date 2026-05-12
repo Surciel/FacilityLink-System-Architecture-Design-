@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   PackageOpen,
   Package,
@@ -58,6 +58,7 @@ export function InventoryPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [prefixFilter, setPrefixFilter] = useState("all");
   const [sortOption, setSortOption] = useState<
     | "name-az"
     | "name-za"
@@ -112,10 +113,69 @@ export function InventoryPage() {
     remaining_stock: "",
     minimum_stock: "",
   });
+  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
+    null,
+  );
 
   useEffect(() => {
     fetchInventory();
     fetchAvailableUnits();
+
+    // Unsubscribe from previous subscription if it exists
+    if (subscriptionRef.current) {
+      subscriptionRef.current.unsubscribe();
+    }
+
+    // Set up real-time subscriptions for inventory, units, and deliveries tables
+    const subscription = supabase
+      .channel("inventory-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "inventory",
+        },
+        () => {
+          fetchInventory();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "units",
+        },
+        () => {
+          fetchAvailableUnits();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "deliveries",
+        },
+        () => {
+          fetchInventory();
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("Inventory real-time subscription active");
+        }
+      });
+
+    subscriptionRef.current = subscription;
+
+    // Cleanup on unmount
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -315,15 +375,21 @@ export function InventoryPage() {
     setActionLoading(true);
     try {
       if (itemNoChanged) {
+        // Get the current stock from the original item to calculate delta
+        const currentItem = inventory.find((i) => i.item_no === oldItemNo);
+        const currentStock = currentItem?.remaining_stock || 0;
+        const newStock =
+          typeof editingItem.remaining_stock === "string"
+            ? parseInt(editingItem.remaining_stock) || 0
+            : editingItem.remaining_stock;
+        const delta = newStock - currentStock;
+
         // Create the new inventory row first so child FK updates point to a valid parent.
         const { error: insertError } = await supabase.from("inventory").insert({
           item_no: newItemNo,
           description: editingItem.description,
           unit_id: editingItem.unit_id,
-          remaining_stock:
-            typeof editingItem.remaining_stock === "string"
-              ? parseInt(editingItem.remaining_stock) || 0
-              : editingItem.remaining_stock,
+          remaining_stock: newStock,
           minimum_stock:
             typeof editingItem.minimum_stock === "string"
               ? parseInt(editingItem.minimum_stock as string) || 0
@@ -369,7 +435,32 @@ export function InventoryPage() {
           return;
         }
 
-        toast.success(`Successfully updated ${editingItem.description}`);
+        // Conditional Delivery Sync: If stock increased, create delivery record
+        if (delta > 0) {
+          const deliveryDate = new Date().toISOString();
+
+          const { error: deliveryError } = await supabase
+            .from("deliveries")
+            .insert({
+              item_no: newItemNo,
+              quantity_delivered: delta,
+              delivery_date: deliveryDate,
+            });
+
+          if (deliveryError) {
+            console.error("Failed to create delivery record:", deliveryError);
+            toast.error(
+              `Item ID updated but delivery record failed to create: ${deliveryError.message}`,
+            );
+          } else {
+            toast.success(
+              `Successfully updated ${editingItem.description}. Delivery record created for ${delta} ${currentItem?.units?.name || "unit"}(s).`,
+            );
+          }
+        } else {
+          toast.success(`Successfully updated ${editingItem.description}`);
+        }
+
         setEditingItem(null);
         setEditOriginalItemNo("");
         setShowUpdateModal(false);
@@ -377,15 +468,22 @@ export function InventoryPage() {
         return;
       }
 
+      const newRemainingStock =
+        typeof editingItem.remaining_stock === "string"
+          ? parseInt(editingItem.remaining_stock) || 0
+          : editingItem.remaining_stock;
+
+      // Get the current stock from the original item to calculate delta
+      const currentItem = inventory.find((i) => i.item_no === oldItemNo);
+      const currentStock = currentItem?.remaining_stock || 0;
+      const delta = newRemainingStock - currentStock;
+
       const { error } = await supabase
         .from("inventory")
         .update({
           description: editingItem.description,
           unit_id: editingItem.unit_id,
-          remaining_stock:
-            typeof editingItem.remaining_stock === "string"
-              ? parseInt(editingItem.remaining_stock) || 0
-              : editingItem.remaining_stock,
+          remaining_stock: newRemainingStock,
           minimum_stock:
             typeof editingItem.minimum_stock === "string"
               ? parseInt(editingItem.minimum_stock as string) || 0
@@ -397,7 +495,32 @@ export function InventoryPage() {
         toast.error("Failed to update item: " + error.message);
         console.error(error);
       } else {
-        toast.success(`Successfully updated ${editingItem.description}`);
+        // Conditional Delivery Sync: If stock increased, create delivery record
+        if (delta > 0) {
+          const deliveryDate = new Date().toISOString();
+
+          const { error: deliveryError } = await supabase
+            .from("deliveries")
+            .insert({
+              item_no: oldItemNo,
+              quantity_delivered: delta,
+              delivery_date: deliveryDate,
+            });
+
+          if (deliveryError) {
+            console.error("Failed to create delivery record:", deliveryError);
+            toast.error(
+              `Item updated but delivery record failed to create: ${deliveryError.message}`,
+            );
+          } else {
+            toast.success(
+              `Successfully updated ${editingItem.description}. Delivery record created for ${delta} ${currentItem?.units?.name || "unit"}(s).`,
+            );
+          }
+        } else {
+          toast.success(`Successfully updated ${editingItem.description}`);
+        }
+
         setEditingItem(null);
         setEditOriginalItemNo("");
         setShowUpdateModal(false);
@@ -520,19 +643,47 @@ export function InventoryPage() {
     item: InventoryItem,
     adjustment: number,
   ) => {
-    const newStock = Math.max(0, item.remaining_stock + adjustment);
+    const currentStock = item.remaining_stock;
+    const newStock = Math.max(0, currentStock + adjustment);
 
-    const { error } = await supabase
+    // Update inventory
+    const { error: inventoryError } = await supabase
       .from("inventory")
       .update({ remaining_stock: newStock })
       .eq("item_no", item.item_no);
 
-    if (error) {
+    if (inventoryError) {
       toast.error("Failed to adjust quantity");
-      console.error(error);
-    } else {
-      fetchInventory();
+      console.error(inventoryError);
+      return;
     }
+
+    // Conditional Delivery Sync: If stock increased, create delivery record
+    if (newStock > currentStock) {
+      const delta = newStock - currentStock;
+      const deliveryDate = new Date().toISOString();
+
+      const { error: deliveryError } = await supabase
+        .from("deliveries")
+        .insert({
+          item_no: item.item_no,
+          quantity_delivered: delta,
+          delivery_date: deliveryDate,
+        });
+
+      if (deliveryError) {
+        console.error("Failed to create delivery record:", deliveryError);
+        toast.error("Quantity adjusted but delivery record failed to create");
+      } else {
+        toast.success(
+          `Stock adjusted by ${adjustment}. Delivery record created for ${delta} ${item.units?.name || "unit"}(s).`,
+        );
+      }
+    } else {
+      toast.success(`Stock adjusted by ${adjustment}.`);
+    }
+
+    fetchInventory();
   };
 
   const openRestockModal = (item: InventoryItem) => {
@@ -631,6 +782,13 @@ export function InventoryPage() {
     };
   };
 
+  // Extract item prefix for category filtering
+  const getItemPrefix = (itemNo: string): string => {
+    if (itemNo.startsWith("GYM-S")) return "GYM";
+    if (itemNo.startsWith("JMS")) return "JMS";
+    return "";
+  };
+
   const categories = Array.from(
     new Set(inventory.map((item) => item.units?.name || "").filter(Boolean)),
   ).sort();
@@ -639,9 +797,14 @@ export function InventoryPage() {
     const matchesSearch =
       item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.item_no.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory =
+    const matchesUnit =
       categoryFilter === "all" || item.units?.name === categoryFilter;
-    return matchesSearch && matchesCategory;
+    const itemPrefix = getItemPrefix(item.item_no);
+    const matchesPrefix =
+      prefixFilter === "all" ||
+      (prefixFilter === "JMS" && itemPrefix === "JMS") ||
+      (prefixFilter === "GYM" && itemPrefix === "GYM");
+    return matchesSearch && matchesUnit && matchesPrefix;
   });
 
   const totalItems = inventory.reduce(
@@ -817,7 +980,7 @@ export function InventoryPage() {
 
             {/* Filters */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Search
@@ -832,6 +995,20 @@ export function InventoryPage() {
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Category
+                  </label>
+                  <select
+                    value={prefixFilter}
+                    onChange={(e) => setPrefixFilter(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
+                  >
+                    <option value="all">All Items</option>
+                    <option value="JMS">JMS</option>
+                    <option value="GYM">GYM</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">

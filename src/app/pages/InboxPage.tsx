@@ -26,6 +26,8 @@ interface Request {
   quantity_requested: number;
   created_at: string;
   request_group_id: string | null;
+  requester_type?: "student" | "faculty" | null;
+  requester_info?: string | null;
 }
 
 interface GroupedRequest {
@@ -33,6 +35,8 @@ interface GroupedRequest {
   requested_by: string;
   department: string;
   created_at: string;
+  requester_type?: "student" | "faculty" | null;
+  requester_info?: string | null;
   items: Request[];
 }
 
@@ -71,9 +75,103 @@ export function InboxPage() {
   );
   const [deleteLoading, setDeleteLoading] = useState(false);
   const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
+    null,
+  );
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchRequestsRealtime = async () => {
+    const { data, error } = await supabase
+      .from("requests")
+      .select("*, inventory(description, unit)")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Failed to load requests:", error);
+      return;
+    }
+
+    const groups: Record<string, GroupedRequest> = {};
+
+    (data || []).forEach((req: any) => {
+      const groupKey = req.request_group_id || req.pkid;
+      if (!groups[groupKey]) {
+        groups[groupKey] = {
+          group_id: groupKey,
+          requested_by: req.requested_by,
+          department: req.department,
+          created_at: req.created_at,
+          requester_type: req.requester_type,
+          requester_info: req.requester_info,
+          items: [],
+        };
+      }
+      const requestItem: Request = {
+        ...req,
+      };
+      groups[groupKey].items.push(requestItem);
+    });
+
+    const sorted = Object.values(groups).sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+
+    setGroupedRequests(sorted);
+    setLoading(false);
+  };
 
   useEffect(() => {
     fetchRequests();
+
+    // Clean up any previous timeout
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current);
+    }
+
+    // Unsubscribe from previous subscription if it exists
+    if (subscriptionRef.current) {
+      subscriptionRef.current.unsubscribe();
+    }
+
+    // Set up real-time subscription for requests table
+    const subscription = supabase
+      .channel("requests-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "requests",
+        },
+        (payload) => {
+          // Debounce the refresh to avoid multiple updates in quick succession
+          if (refreshTimeoutRef.current) {
+            clearTimeout(refreshTimeoutRef.current);
+          }
+
+          refreshTimeoutRef.current = setTimeout(() => {
+            fetchRequestsRealtime();
+          }, 500);
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("Inbox real-time subscription active");
+        }
+      });
+
+    subscriptionRef.current = subscription;
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -133,6 +231,8 @@ export function InboxPage() {
           requested_by: req.requested_by,
           department: req.department,
           created_at: req.created_at,
+          requester_type: req.requester_type,
+          requester_info: req.requester_info,
           items: [],
         };
       }
@@ -526,6 +626,21 @@ export function InboxPage() {
                           {selectedGroup.requested_by}
                         </div>
                       </div>
+
+                      {/* Conditionally show Student Number or Phone Number */}
+                      {selectedGroup.requester_info && (
+                        <div>
+                          <label className="text-xs font-medium text-gray-500">
+                            {selectedGroup.requester_type === "student"
+                              ? "Student Number"
+                              : "Contact Number"}
+                          </label>
+                          <div className="text-sm mt-1">
+                            {selectedGroup.requester_info}
+                          </div>
+                        </div>
+                      )}
+
                       <div>
                         <label className="text-xs font-medium text-gray-500">
                           Department / College

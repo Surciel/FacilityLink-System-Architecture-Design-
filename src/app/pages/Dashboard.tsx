@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   PackageOpen,
   AlertTriangle,
@@ -38,9 +38,57 @@ export function Dashboard() {
     const stored = localStorage.getItem("viewedRequests");
     return new Set(stored ? JSON.parse(stored) : []);
   });
+  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
+    null,
+  );
 
   useEffect(() => {
     fetchDashboardData();
+
+    // Unsubscribe from previous subscription if it exists
+    if (subscriptionRef.current) {
+      subscriptionRef.current.unsubscribe();
+    }
+
+    // Set up real-time subscription for requests and inventory tables
+    const subscription = supabase
+      .channel("dashboard-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "requests",
+        },
+        () => {
+          fetchDashboardDataRealtime();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "inventory",
+        },
+        () => {
+          fetchDashboardDataRealtime();
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("Dashboard real-time subscription active");
+        }
+      });
+
+    subscriptionRef.current = subscription;
+
+    // Cleanup on unmount
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -71,6 +119,19 @@ export function Dashboard() {
       console.error("Failed to load dashboard data", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchDashboardDataRealtime = async () => {
+    try {
+      await Promise.all([
+        fetchRequests(),
+        fetchLowStockItems(),
+        fetchTotalItems(),
+        fetchCompletedToday(),
+      ]);
+    } catch (error) {
+      console.error("Failed to update dashboard data", error);
     }
   };
 

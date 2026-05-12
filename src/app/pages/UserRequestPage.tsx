@@ -539,6 +539,11 @@ export function UserRequestPage() {
         item_no: item.id,
         quantity_requested: item.quantity,
         requested_by: personalInfo.fullName,
+        requester_type: personalInfo.userType,
+        requester_info:
+          personalInfo.userType === "student"
+            ? personalInfo.studentNumber
+            : personalInfo.facultyId,
         department: department,
         request_group_id: requestGroupId,
         created_at: phTime.toISOString(),
