@@ -125,6 +125,7 @@ export function AnalyticsPage() {
   const [risMonthOption, setRisMonthOption] =
     useState<string>(defaultMonthOption);
   const [risWeekOption, setRisWeekOption] = useState<string>("week1");
+  const [risDayOption, setRisDayOption] = useState<string>(getLocalISODate(new Date()));
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
 
   useEffect(() => {
@@ -245,9 +246,15 @@ export function AnalyticsPage() {
   };
 
   const fetchTopRequestedItems = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("requests")
-      .select("description, quantity_requested, created_at");
+      .select("item_no, quantity_requested, created_at, inventory(description)");
+    if (error) {
+      console.error("Analytics fetchTopRequestedItems error:", error);
+      toast.error("Failed to load request analytics data.");
+      return;
+    }
+
     const now = new Date();
     const thisMonth = now.getMonth();
     const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
@@ -255,31 +262,67 @@ export function AnalyticsPage() {
     const lastMonthCounts: Record<string, number> = {};
 
     (data || []).forEach((row) => {
-      const month = new Date(row.created_at).getMonth();
-      const name = row.description || "Unknown";
+      const createdAt = row.created_at ? new Date(row.created_at) : null;
+      if (!createdAt || Number.isNaN(createdAt.getTime())) return;
+
+      const quantity = Number(row.quantity_requested) || 0;
+      if (quantity === 0) return;
+
+      const month = createdAt.getMonth();
+      const rowAny = row as any;
+      const inventoryDescription = Array.isArray(rowAny.inventory)
+        ? rowAny.inventory[0]?.description
+        : rowAny.inventory?.description;
+      const name = inventoryDescription || rowAny.item_no || "Unknown Item";
+
       if (month === thisMonth)
-        thisMonthCounts[name] =
-          (thisMonthCounts[name] || 0) + (row.quantity_requested || 0);
+        thisMonthCounts[name] = (thisMonthCounts[name] || 0) + quantity;
       if (month === lastMonth)
-        lastMonthCounts[name] =
-          (lastMonthCounts[name] || 0) + (row.quantity_requested || 0);
+        lastMonthCounts[name] = (lastMonthCounts[name] || 0) + quantity;
     });
 
+    const positiveThisMonthCounts = Object.fromEntries(
+      Object.entries(thisMonthCounts).filter(([, count]) => count > 0),
+    );
+
     setTopRequestedItems(
-      Object.entries(thisMonthCounts)
+      Object.entries(positiveThisMonthCounts)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10)
-        .map(([name, requests]) => ({
-          name,
-          requests,
-          trend:
-            lastMonthCounts[name] > 0
-              ? Math.round(
-                  ((requests - lastMonthCounts[name]) / lastMonthCounts[name]) *
-                    100,
-                )
-              : 0,
-        })),
+        .map(([name, requests]) => {
+          const lastMonthValue = lastMonthCounts[name] || 0;
+          const trendValue = lastMonthValue > 0
+            ? Math.round(
+                ((requests - lastMonthValue) / lastMonthValue) * 100,
+              )
+            : 0;
+          const isNew = lastMonthValue === 0;
+          const isHighVolume = requests >= 10;
+
+          return {
+            name,
+            requests,
+            trend: trendValue,
+            isNew,
+            trendLabel:
+              isNew ? "New" : `${trendValue > 0 ? "+" : ""}${trendValue}%`,
+            advice:
+              isNew
+                ? "New request item this month"
+                : trendValue > 0
+                ? isHighVolume
+                  ? "Consider increasing stock"
+                  : "Demand rising, monitor inventory"
+                : "Demand stable or decreasing",
+            adviceType: isNew
+              ? "new"
+              : trendValue > 0
+              ? isHighVolume
+                ? "increase"
+                : "monitor"
+              : "stable",
+          };
+        }),
     );
 
     const colors = [
@@ -290,7 +333,7 @@ export function AnalyticsPage() {
       "#8b5cf6",
       "#ec4899",
     ];
-    const topSix = Object.entries(thisMonthCounts)
+    const topSix = Object.entries(positiveThisMonthCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6);
     const topSixTotal = topSix.reduce((sum, [_, count]) => sum + count, 0);
@@ -299,7 +342,7 @@ export function AnalyticsPage() {
       topSix.map(([name, count], i) => ({
         fullName: name,
         name: shortenItemName(name, 18),
-        value: topSixTotal > 0 ? Math.round((count / topSixTotal) * 100) : 0,
+        value: topSixTotal > 0 ? parseFloat(((count / topSixTotal) * 100).toFixed(1)) : 0,
         count: count,
         color: colors[i % colors.length],
       })),
@@ -886,6 +929,226 @@ export function AnalyticsPage() {
     }
   };
 
+  // ── RIS DAILY PDF ───────────────────────────────────────────────────────
+  const generateRISDailyPDF = async () => {
+    setGenerating("Daily");
+    try {
+      const prefix = risReportFacility === "JMS" ? "JMS" : "GYM-S";
+      const selectedDate = new Date(risDayOption);
+      if (Number.isNaN(selectedDate.getTime())) {
+        toast.error("Select a valid date for the daily RIS.");
+        setGenerating(null);
+        return;
+      }
+
+      const startOfDay = new Date(selectedDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(selectedDate);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const { data: requestsData } = await supabase
+        .from("requests")
+        .select("item_no, quantity_requested, inventory(description)")
+        .ilike("item_no", `${prefix}%`)
+        .gte("created_at", startOfDay.toISOString())
+        .lte("created_at", endOfDay.toISOString());
+
+      if (!requestsData || requestsData.length === 0) {
+        toast.error(`No data found for ${risDayOption} (${prefix})`);
+        setGenerating(null);
+        return;
+      }
+
+      const aggregated: Record<
+        string,
+        { item_no: string; description: string; quantity: number }
+      > = {};
+      (requestsData || []).forEach((req: any) => {
+        const itemNo = req.item_no || "";
+        const description = req.inventory?.description || "";
+        if (!aggregated[itemNo]) {
+          aggregated[itemNo] = { item_no: itemNo, description, quantity: 0 };
+        }
+        aggregated[itemNo].quantity += Number(req.quantity_requested) || 0;
+        if (!aggregated[itemNo].description && description) {
+          aggregated[itemNo].description = description;
+        }
+      });
+
+      const historyData = Object.values(aggregated).sort((a, b) =>
+        a.item_no.localeCompare(b.item_no),
+      );
+
+      const doc = new jsPDF("portrait");
+      doc.setFont("times");
+      const pageWidth = doc.internal.pageSize.width;
+      const monthName = fullMonths[selectedDate.getMonth()];
+      const year = selectedDate.getFullYear();
+      const day = selectedDate.getDate();
+
+      doc
+        .setFontSize(9)
+        .text("Republic of the Philippines", pageWidth / 2, 15, {
+          align: "center",
+        });
+      doc
+        .setFont("times", "bold")
+        .setFontSize(10)
+        .text("PAMANTASAN NG LUNGSOD NG MAYNILA", pageWidth / 2, 20, {
+          align: "center",
+        });
+      doc
+        .setFont("times", "normal")
+        .setFontSize(9)
+        .text(
+          "(University of the City of Manila)\nIntramuros, Manila",
+          pageWidth / 2,
+          24,
+          { align: "center" },
+        );
+      doc
+        .setFont("times", "bold")
+        .text("GYMNASIUM MANAGEMENT SECTION", pageWidth / 2, 34, {
+          align: "center",
+        });
+      doc
+        .setFontSize(14)
+        .text("REQUISITION AND ISSUE SLIP", pageWidth / 2, 42, {
+          align: "center",
+        });
+
+      autoTable(doc, {
+        body: [
+          [
+            "Division :",
+            "Responsibility Center",
+            `RIS No.: ${year}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-001`,
+            monthName.toUpperCase(),
+          ],
+          [
+            "Office : GSO",
+            "Code",
+            "SAI No.:",
+            `Date: ${risDayOption}`,
+          ],
+        ],
+        startY: 48,
+        theme: "plain",
+        styles: {
+          fontSize: 9,
+          font: "times",
+          textColor: [0, 0, 0],
+          lineColor: [0, 0, 0],
+          lineWidth: 0.1,
+          fontStyle: "bold",
+          cellPadding: 1.5,
+        },
+        columnStyles: {
+          0: { cellWidth: 35 },
+          1: { cellWidth: 50 },
+          3: { cellWidth: 30, halign: "center", fontStyle: "normal" },
+        },
+      });
+
+      const bodyData = historyData
+        .map((item) => [
+          item.item_no || "",
+          item.description || "",
+          item.quantity,
+          item.quantity,
+          "",
+        ])
+        .filter((row) => {
+          const quantity = row[2];
+          return quantity !== null && quantity !== 0 && quantity !== undefined;
+        });
+
+      while (bodyData.length < 15) bodyData.push(["", "", "", "", ""]);
+
+      autoTable(doc, {
+        head: [
+          [
+            {
+              content: "Stock No.",
+              rowSpan: 2,
+              styles: { halign: "center", valign: "middle" },
+            },
+            {
+              content: "Requisition",
+              colSpan: 2,
+              styles: { halign: "center" },
+            },
+            { content: "Issuance", colSpan: 2, styles: { halign: "center" } },
+          ],
+          [
+            { content: "Description", styles: { halign: "center" } },
+            { content: "Quantity", styles: { halign: "center" } },
+            { content: "Quantity", styles: { halign: "center" } },
+            { content: "Remarks", styles: { halign: "center" } },
+          ],
+        ],
+        body: bodyData,
+        startY: (doc as any).lastAutoTable.finalY,
+        theme: "grid",
+        styles: {
+          fontSize: 8,
+          font: "times",
+          lineColor: [0, 0, 0],
+          lineWidth: 0.1,
+          cellPadding: 1.5,
+          textColor: [0, 0, 0],
+        },
+        headStyles: {
+          fillColor: [240, 240, 240],
+          textColor: [0, 0, 0],
+          fontStyle: "bold",
+          halign: "center",
+        },
+        columnStyles: {
+          0: { cellWidth: 25, halign: "center" },
+          1: { cellWidth: 80 },
+          2: { halign: "center" },
+          3: { halign: "center" },
+        },
+      });
+
+      autoTable(doc, {
+        startY: (doc as any).lastAutoTable.finalY,
+        theme: "grid",
+        styles: {
+          fontSize: 8,
+          font: "times",
+          lineColor: [0, 0, 0],
+          lineWidth: 0.1,
+          cellPadding: 1.5,
+          textColor: [0, 0, 0],
+        },
+        body: [
+          ["", "Requested by:", "Approved by:", "Issued by:", "Received by:"],
+          ["Signature:", "", "", "", ""],
+          [
+            "Printed Name:",
+            "UTILITY WORKERS",
+            "EMILY E. ESPERO",
+            "GRACIANO MONTIADORA",
+            "UTILITY WORKERS",
+          ],
+          ["Designation:", "GSO", "Chief, GSO", "STOREKEEPER", "GSO"],
+          ["Date:", "", "", "", ""],
+        ],
+        columnStyles: { 0: { fontStyle: "italic", cellWidth: 25 } },
+      });
+
+      doc.save(`RIS_${risReportFacility}_${risDayOption}.pdf`);
+      toast.success("Daily RIS Report Downloaded!");
+    } catch (err) {
+      toast.error("Failed to generate report.");
+      console.error(err);
+    } finally {
+      setGenerating(null);
+    }
+  };
+
   // ── TEST CURRENT MONTH DATA ──────────────────────────────────────────────
   const testCurrentMonthData = async () => {
     setGenerating("Test");
@@ -1282,34 +1545,53 @@ export function AnalyticsPage() {
                 Percentage of requests by item (click for details)
               </p>
               {categoryDistribution.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={categoryDistribution}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }) => `${name}: ${value}%`}
-                      outerRadius={100}
-                      dataKey="value"
-                      isAnimationActive={false}
-                      onClick={(entry) => {
-                        setSelectedCategoryDetail(entry);
-                        setShowCategoryDetailModal(true);
-                      }}
-                      style={{ cursor: "pointer" }}
-                    >
-                      {categoryDistribution.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value) => `${value}%`}
-                      cursor={false}
-                      contentStyle={{ pointerEvents: "none" }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
+                <>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={categoryDistribution}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={false}
+                        outerRadius={100}
+                        dataKey="value"
+                        isAnimationActive={false}
+                        onClick={(entry) => {
+                          setSelectedCategoryDetail(entry);
+                          setShowCategoryDetailModal(true);
+                        }}
+                        style={{ cursor: "pointer" }}
+                      >
+                        {categoryDistribution.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value) => `${value}%`}
+                        cursor={false}
+                        contentStyle={{ pointerEvents: "none" }}
+                      />
+                      <Legend verticalAlign="bottom" align="center" height={36} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {categoryDistribution.map((entry, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center gap-2 text-sm text-gray-700"
+                      >
+                        <span
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: entry.color }}
+                        />
+                        <span>
+                          {entry.fullName}: {entry.value}% ({entry.count})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <div className="h-[300px] flex items-center justify-center text-gray-400">
                   No data available
@@ -1416,27 +1698,33 @@ export function AnalyticsPage() {
                         </div>
                       </div>
                       <div
-                        className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 ${item.trend > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
+                        className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 ${item.isNew ? "bg-blue-100 text-blue-700" : item.trend > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
                       >
-                        {item.trend > 0 ? (
+                        {item.isNew ? (
+                          <TrendingUp className="w-3 h-3" />
+                        ) : item.trend > 0 ? (
                           <TrendingUp className="w-3 h-3" />
                         ) : (
                           <TrendingDown className="w-3 h-3" />
                         )}
-                        {Math.abs(item.trend)}%
+                        {item.trendLabel}
                       </div>
                     </div>
                     <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-gray-700">
-                      {item.trend > 0 ? (
-                        <span className="flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3 text-orange-500" />{" "}
-                          Consider increasing stock
-                        </span>
-                      ) : (
-                        <span className="text-gray-500">
-                          Demand stable or decreasing
-                        </span>
-                      )}
+                      <span
+                        className={`flex items-center gap-1 ${
+                          item.adviceType === "new"
+                            ? "text-blue-600"
+                            : item.adviceType === "increase"
+                            ? "text-orange-600"
+                            : "text-gray-500"
+                        }`}
+                      >
+                        {item.adviceType !== "new" && item.adviceType !== "stable" ? (
+                          <AlertCircle className="w-3 h-3 text-orange-500" />
+                        ) : null}
+                        {item.advice}
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -1466,7 +1754,7 @@ export function AnalyticsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
                   <div>
                     <label className="block text-xs font-medium text-white/80 mb-1.5">
                       Facility Equipment
@@ -1517,15 +1805,34 @@ export function AnalyticsPage() {
                       <option value="week4">Week 4 (23+)</option>
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-xs font-medium text-white/80 mb-1.5">
+                      Daily Date
+                    </label>
+                    <input
+                      type="date"
+                      value={risDayOption}
+                      onChange={(e) => setRisDayOption(e.target.value)}
+                      className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
+                    />
+                  </div>
                 </div>
 
                 <button
-                  onClick={generateRISWeeklyPDF}
+                  onClick={generateRISDailyPDF}
                   disabled={generating !== null}
-                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-auto shadow-sm disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
-                  {generating === "Weekly" ? "Generating..." : "Download PDF"}
+                  {generating === "Daily" ? "Generating..." : "Download Daily RIS"}
+                </button>
+                <button
+                  onClick={generateRISWeeklyPDF}
+                  disabled={generating !== null}
+                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-3 shadow-sm disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  {generating === "Weekly" ? "Generating..." : "Download Weekly RIS"}
                 </button>
               </div>
 
