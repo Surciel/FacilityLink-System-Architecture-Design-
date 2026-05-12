@@ -948,7 +948,7 @@ export function AnalyticsPage() {
 
       const { data: requestsData } = await supabase
         .from("requests")
-        .select("item_no, quantity_requested, inventory(description)")
+        .select("item_no, quantity_requested, requested_by, inventory(description)")
         .ilike("item_no", `${prefix}%`)
         .gte("created_at", startOfDay.toISOString())
         .lte("created_at", endOfDay.toISOString());
@@ -961,17 +961,31 @@ export function AnalyticsPage() {
 
       const aggregated: Record<
         string,
-        { item_no: string; description: string; quantity: number }
+        {
+          item_no: string;
+          description: string;
+          requested_by: string;
+          quantity: number;
+        }
       > = {};
       (requestsData || []).forEach((req: any) => {
         const itemNo = req.item_no || "";
+        const requestedBy = req.requested_by || "";
         const description = req.inventory?.description || "";
-        if (!aggregated[itemNo]) {
-          aggregated[itemNo] = { item_no: itemNo, description, quantity: 0 };
+        const key = `${itemNo}::${requestedBy}`;
+
+        if (!aggregated[key]) {
+          aggregated[key] = {
+            item_no: itemNo,
+            description,
+            requested_by: requestedBy,
+            quantity: 0,
+          };
         }
-        aggregated[itemNo].quantity += Number(req.quantity_requested) || 0;
-        if (!aggregated[itemNo].description && description) {
-          aggregated[itemNo].description = description;
+
+        aggregated[key].quantity += Number(req.quantity_requested) || 0;
+        if (!aggregated[key].description && description) {
+          aggregated[key].description = description;
         }
       });
 
@@ -1056,6 +1070,7 @@ export function AnalyticsPage() {
           item.description || "",
           item.quantity,
           item.quantity,
+          item.requested_by || "",
           "",
         ])
         .filter((row) => {
@@ -1063,7 +1078,7 @@ export function AnalyticsPage() {
           return quantity !== null && quantity !== 0 && quantity !== undefined;
         });
 
-      while (bodyData.length < 15) bodyData.push(["", "", "", "", ""]);
+      while (bodyData.length < 15) bodyData.push(["", "", "", "", "", ""]);
 
       autoTable(doc, {
         head: [
@@ -1078,17 +1093,20 @@ export function AnalyticsPage() {
               colSpan: 2,
               styles: { halign: "center" },
             },
-            { content: "Issuance", colSpan: 2, styles: { halign: "center" } },
+            { content: "Issuance", colSpan: 3, styles: { halign: "center" } },
           ],
           [
             { content: "Description", styles: { halign: "center" } },
-            { content: "Quantity", styles: { halign: "center" } },
-            { content: "Quantity", styles: { halign: "center" } },
+            { content: "Qty", styles: { halign: "center" } },
+            { content: "Qty", styles: { halign: "center" } },
+            { content: "Name", styles: { halign: "center" } },
             { content: "Remarks", styles: { halign: "center" } },
           ],
         ],
         body: bodyData,
         startY: (doc as any).lastAutoTable.finalY,
+        margin: { left: 14, right: 14 },
+        tableWidth: 182,
         theme: "grid",
         styles: {
           fontSize: 8,
@@ -1105,10 +1123,12 @@ export function AnalyticsPage() {
           halign: "center",
         },
         columnStyles: {
-          0: { cellWidth: 25, halign: "center" },
-          1: { cellWidth: 80 },
-          2: { halign: "center" },
-          3: { halign: "center" },
+          0: { cellWidth: 18, halign: "center" },
+          1: { cellWidth: 68 },
+          2: { cellWidth: 14, halign: "center" },
+          3: { cellWidth: 14, halign: "center" },
+          4: { cellWidth: 28, halign: "center" },
+          5: { cellWidth: 40, halign: "center" },
         },
       });
 
