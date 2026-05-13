@@ -1926,26 +1926,14 @@ export function AnalyticsPage() {
                   </div>
                 </div>
 
-                <div className="space-y-3">
-                  <button
-                    onClick={testCurrentMonthData}
-                    disabled={generating !== null}
-                    className="w-full flex items-center justify-center gap-2 bg-white/30 text-white py-2.5 rounded font-bold hover:bg-white/40 transition-colors border border-white/50 text-sm disabled:opacity-50"
-                  >
-                    <Activity className="w-4 h-4" />
-                    {generating === "Test"
-                      ? "Testing..."
-                      : "Test Current Month"}
-                  </button>
-                  <button
-                    onClick={generateSSMIPDF}
-                    disabled={generating !== null}
-                    className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
-                  >
-                    <Download className="w-4 h-4" />
-                    {generating === "SSMI" ? "Generating..." : "Download PDF"}
-                  </button>
-                </div>
+                <button
+                  onClick={generateSSMIPDF}
+                  disabled={generating !== null}
+                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  {generating === "SSMI" ? "Generating..." : "Download PDF"}
+                </button>
               </div>
             </div>
           </div>
