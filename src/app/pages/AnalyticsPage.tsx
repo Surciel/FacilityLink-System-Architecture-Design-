@@ -113,9 +113,12 @@ export function AnalyticsPage() {
     "November",
     "December",
   ];
-  const currentMonth = fullMonths[new Date().getMonth()];
-  const currentYearStr = new Date().getFullYear();
-  const defaultMonthOption = `${currentMonth} ${currentYearStr}`;
+  const now = new Date();
+  const currentMonth = fullMonths[now.getMonth()];
+  const currentYearStr = now.getFullYear();
+  const currentMonthIndex = now.getMonth();
+  const currentLastDay = new Date(currentYearStr, currentMonthIndex + 1, 0);
+  const defaultMonthOption = `${currentMonth} 1 - ${currentMonth} ${currentLastDay.getDate()}, ${currentYearStr}`;
   const [ssmiMonthOption, setSsmiMonthOption] =
     useState<string>(defaultMonthOption);
 
@@ -212,11 +215,11 @@ export function AnalyticsPage() {
       if (year < currentYear) break;
 
       const monthName = fullMonths[monthIndex];
-      const displayKey = `${monthName} ${year}`;
+      const firstDay = new Date(year, monthIndex, 1);
+      const lastDay = new Date(year, monthIndex + 1, 0);
+      const displayKey = `${monthName} 1 - ${monthName} ${lastDay.getDate()}, ${year}`;
 
       if (monthIndex === currentMonthIndex && year === currentYear) {
-        const firstDay = new Date(year, monthIndex, 1);
-        const lastDay = new Date(year, monthIndex + 1, 0);
         const { data } = await supabase
           .from("requests")
           .select("quantity_requested")
@@ -228,9 +231,7 @@ export function AnalyticsPage() {
         );
         monthlyData[displayKey] = total;
       } else {
-        const firstDay = new Date(year, monthIndex, 1);
-        const lastDay = new Date(year, monthIndex + 1, 0);
-        const periodLabel = `${monthName} ${firstDay.getDate()} to ${lastDay.getDate()}, ${year}`;
+        const periodLabel = `${monthName} 1 - ${monthName} ${lastDay.getDate()}, ${year}`;
         monthlyData[displayKey] = historyByPeriod[periodLabel] || 0;
       }
     }
@@ -382,8 +383,12 @@ export function AnalyticsPage() {
     const uniqueMonths = Array.from(
       new Set((data || []).map((row) => row.period_label)),
     ).sort((a, b) => {
-      const [monthA, yearA] = a.split(" ");
-      const [monthB, yearB] = b.split(" ");
+      const partsA = a.split(" ");
+      const partsB = b.split(" ");
+      const monthA = partsA[0];
+      const yearA = partsA[partsA.length - 1];
+      const monthB = partsB[0];
+      const yearB = partsB[partsB.length - 1];
       const yearDiff = parseInt(yearB) - parseInt(yearA);
       if (yearDiff !== 0) return yearDiff;
       return monthNameToIndex[monthB] - monthNameToIndex[monthA];
@@ -681,7 +686,9 @@ export function AnalyticsPage() {
     setGenerating("Weekly");
     try {
       const prefix = risReportFacility === "JMS" ? "JMS" : "GYM-S";
-      const [monthName, yearStr] = risMonthOption.split(" ");
+      const parts = risMonthOption.split(" ");
+      const monthName = parts[0];
+      const yearStr = parts[parts.length - 1];
       const monthIndex = monthNameToIndex[monthName];
       const year = parseInt(yearStr);
 
@@ -1693,7 +1700,7 @@ export function AnalyticsPage() {
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <h3 className="text-xl font-bold text-gray-900">
-              Decision Support System
+              Item Trend Analysis
             </h3>
             <p className="text-sm text-gray-600 mt-1 mb-6">
               Top requested items with trend analysis
