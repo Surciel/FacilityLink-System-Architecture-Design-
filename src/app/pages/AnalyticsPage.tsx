@@ -191,6 +191,21 @@ export function AnalyticsPage() {
       "December",
     ];
 
+    const shortMonths = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+
     const monthlyData: Record<string, number> = {};
 
     const { data: allHistoryData } = await supabase
@@ -215,6 +230,7 @@ export function AnalyticsPage() {
       if (year < currentYear) break;
 
       const monthName = fullMonths[monthIndex];
+      const monthShort = shortMonths[monthIndex];
       const firstDay = new Date(year, monthIndex, 1);
       const lastDay = new Date(year, monthIndex + 1, 0);
       const displayKey = `${monthName} 1 - ${monthName} ${lastDay.getDate()}, ${year}`;
@@ -231,8 +247,10 @@ export function AnalyticsPage() {
         );
         monthlyData[displayKey] = total;
       } else {
-        const periodLabel = `${monthName} 1 - ${monthName} ${lastDay.getDate()}, ${year}`;
-        monthlyData[displayKey] = historyByPeriod[periodLabel] || 0;
+        // Try both full and abbreviated month name formats with "to" separator
+        const periodLabelFull = `${monthName} 1 to ${lastDay.getDate()}, ${year}`;
+        const periodLabelShort = `${monthShort} 1 to ${lastDay.getDate()}, ${year}`;
+        monthlyData[displayKey] = historyByPeriod[periodLabelFull] || historyByPeriod[periodLabelShort] || 0;
       }
     }
 

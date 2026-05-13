@@ -651,18 +651,6 @@ export function UserRequestPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Admin Access Button */}
-      <button
-        onClick={() => navigate("/admin/login")}
-        className="fixed bottom-4 right-4 bg-gray-800 hover:bg-gray-900 text-white p-4 rounded-full shadow-lg transition-all hover:scale-110 z-50 group"
-        title="Admin Login"
-      >
-        <Lock className="w-6 h-6" />
-        <span className="absolute bottom-full right-0 mb-2 bg-gray-900 text-white text-xs px-3 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
-          Admin Login
-        </span>
-      </button>
-
       {/* Header */}
       <header className="bg-[#4A89B0] shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
