@@ -13,11 +13,11 @@ const router = createBrowserRouter([
     Component: UserRequestPage,
   },
   {
-    path: "/admin",
+    path: "/admin/login",
     Component: AdminLogin,
   },
   {
-    path: "/admin/dashboard",
+    path: "/admin",
     Component: Dashboard,
   },
   {

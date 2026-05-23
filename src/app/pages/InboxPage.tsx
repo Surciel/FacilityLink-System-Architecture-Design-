@@ -325,13 +325,13 @@ export function InboxPage() {
   );
 
   const menuItems = [
-    { path: "/admin/dashboard", icon: LayoutDashboard, label: "Dashboard" },
+    { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/admin/inbox", icon: Inbox, label: "Inbox" },
     { path: "/admin/inventory", icon: PackageOpen, label: "Inventory" },
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => navigate("/admin");
+  const handleLogout = () => navigate("/admin/login");
 
   const getSortedGroups = (groups: GroupedRequest[]) => {
     const sorted = [...groups];

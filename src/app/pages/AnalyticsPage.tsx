@@ -1447,7 +1447,7 @@ export function AnalyticsPage() {
   };
 
   const menuItems = [
-    { path: "/admin/dashboard", icon: LayoutDashboard, label: "Dashboard" },
+    { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/admin/inbox", icon: Inbox, label: "Inbox" },
     { path: "/admin/inventory", icon: PackageOpen, label: "Inventory" },
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
@@ -1466,7 +1466,7 @@ export function AnalyticsPage() {
             </h1>
           </div>
           <button
-            onClick={() => navigate("/admin")}
+            onClick={() => navigate("/admin/login")}
             className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg"
           >
             <LogOut className="w-5 h-5" />

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   PackageOpen,
   AlertTriangle,
@@ -38,9 +38,57 @@ export function Dashboard() {
     const stored = localStorage.getItem("viewedRequests");
     return new Set(stored ? JSON.parse(stored) : []);
   });
+  const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
+    null,
+  );
 
   useEffect(() => {
     fetchDashboardData();
+
+    // Unsubscribe from previous subscription if it exists
+    if (subscriptionRef.current) {
+      subscriptionRef.current.unsubscribe();
+    }
+
+    // Set up real-time subscription for requests and inventory tables
+    const subscription = supabase
+      .channel("dashboard-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "requests",
+        },
+        () => {
+          fetchDashboardDataRealtime();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "inventory",
+        },
+        () => {
+          fetchDashboardDataRealtime();
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("Dashboard real-time subscription active");
+        }
+      });
+
+    subscriptionRef.current = subscription;
+
+    // Cleanup on unmount
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -74,6 +122,19 @@ export function Dashboard() {
     }
   };
 
+  const fetchDashboardDataRealtime = async () => {
+    try {
+      await Promise.all([
+        fetchRequests(),
+        fetchLowStockItems(),
+        fetchTotalItems(),
+        fetchCompletedToday(),
+      ]);
+    } catch (error) {
+      console.error("Failed to update dashboard data", error);
+    }
+  };
+
   const fetchRequests = async () => {
     const { data, error } = await supabase
       .from("requests")
@@ -85,19 +146,18 @@ export function Dashboard() {
     setRequests(data || []);
   };
 
-const fetchLowStockItems = async () => {
+  const fetchLowStockItems = async () => {
     const { data, error } = await supabase
       .from("inventory")
       .select("item_no, description, unit, remaining_stock, minimum_stock")
       .order("remaining_stock", { ascending: true });
 
     if (error) return console.error(error);
-    
-    const lowStock = (data || []).filter((item) => {
-      if (!item.minimum_stock) return false;
-      const percentage = (item.remaining_stock / item.minimum_stock) * 100;
-      return percentage < 60; 
-    });  
+    // Filter items where remaining_stock < minimum_stock
+    const lowStock = (data || []).filter(
+      (item) =>
+        item.minimum_stock != null && item.remaining_stock < item.minimum_stock,
+    );
     setLowStockItems(lowStock);
   };
 
@@ -133,7 +193,7 @@ const fetchLowStockItems = async () => {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => navigate("/admin");
+  const handleLogout = () => navigate("/admin/login");
 
   const stats = [
     {
@@ -413,9 +473,9 @@ const fetchLowStockItems = async () => {
                 </div>
               </div>
 
-{/* Low Stock Items */}
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col h-full">
-                <div className="p-6 border-b border-gray-100 flex-shrink-0">
+              {/* Low Stock Items */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+                <div className="p-6 border-b border-gray-100">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="w-5 h-5 text-red-600" />
@@ -424,7 +484,7 @@ const fetchLowStockItems = async () => {
                       </h2>
                     </div>
                     <button
-                      onClick={() => navigate("/admin/inventory?sort=stock-low")}
+                      onClick={() => navigate("/admin/inventory")}
                       className="text-[#4A89B0] hover:text-[#3776A0] text-sm font-medium flex items-center gap-1"
                     >
                       View All <ChevronRight className="w-4 h-4" />
@@ -435,8 +495,7 @@ const fetchLowStockItems = async () => {
                   </p>
                 </div>
 
-                {/* Added max-h and overflow-y-auto for scrollability */}
-                <div className="p-4 space-y-3 max-h-[400px] overflow-y-auto">
+                <div className="p-4 space-y-3">
                   {loading ? (
                     <div className="text-center text-gray-400 py-4">
                       Loading...
@@ -446,66 +505,54 @@ const fetchLowStockItems = async () => {
                       All items are well stocked!
                     </div>
                   ) : (
-                    lowStockItems
-                      // Removed .slice(0, 5) to show all items
-                      // Updated sort: Prioritize lowest stock percentage first, then alphabetical
-                      .sort((a, b) => {
-                        const minA = a.minimum_stock || 10;
-                        const minB = b.minimum_stock || 10;
-                        const percA = (a.remaining_stock / minA) * 100;
-                        const percB = (b.remaining_stock / minB) * 100;
-                        
-                        if (percA !== percB) return percA - percB;
-                        return (a.description || "").localeCompare(b.description || "");
-                      })
-                      .map((item, index) => {
-                        const minimum = item.minimum_stock || 10;
-                        const percentage = Math.min(
-                          (item.remaining_stock / minimum) * 100,
-                          100,
-                        );
-                        return (
-                          <div
-                            key={index}
-                            className="p-3 bg-red-50 border border-red-100 rounded-lg"
-                          >
-                            <div className="flex items-start justify-between mb-2">
-                              <div className="flex-1">
-                                <div className="font-semibold text-gray-900 text-sm">
-                                  {item.description}
-                                </div>
-                                <div className="text-xs text-gray-600">
-                                  {item.item_no}
-                                </div>
+                    lowStockItems.slice(0, 5).map((item, index) => {
+                      const minimum = item.minimum_stock || 10;
+                      const percentage = Math.min(
+                        (item.remaining_stock / minimum) * 100,
+                        100,
+                      );
+                      return (
+                        <div
+                          key={index}
+                          className="p-3 bg-red-50 border border-red-100 rounded-lg"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <div className="font-semibold text-gray-900 text-sm">
+                                {item.description}
                               </div>
-                              <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
-                                {item.remaining_stock} {item.unit}
-                              </span>
+                              <div className="text-xs text-gray-600">
+                                {item.item_no}
+                              </div>
                             </div>
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between text-xs text-gray-600">
-                                <span>Stock Level</span>
-                                <span>{Math.round(percentage)}%</span>
-                              </div>
-                              <div className="w-full bg-gray-200 rounded-full h-2">
-                                <div
-                                  className={`h-2 rounded-full ${
-                                    percentage < 30
-                                      ? "bg-red-600"
-                                      : percentage < 60
-                                        ? "bg-orange-500"
-                                        : "bg-green-500"
-                                  }`}
-                                  style={{ width: `${percentage}%` }}
-                                />
-                              </div>
+                            <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
+                              {item.remaining_stock} {item.unit}
+                            </span>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-xs text-gray-600">
+                              <span>Stock Level</span>
+                              <span>{Math.round(percentage)}%</span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div
+                                className={`h-2 rounded-full ${
+                                  percentage < 30
+                                    ? "bg-red-600"
+                                    : percentage < 60
+                                      ? "bg-orange-500"
+                                      : "bg-green-500"
+                                }`}
+                                style={{ width: `${percentage}%` }}
+                              />
                             </div>
                           </div>
-                        );
-                      })
+                        </div>
+                      );
+                    })
                   )}
                 </div>
-              </div>            
+              </div>
             </div>
           </div>
         </div>

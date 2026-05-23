@@ -731,9 +731,13 @@ export function UserRequestPage() {
                       type="text"
                       value={personalInfo.fullName}
                       onChange={(e) => {
+                        const filtered = e.target.value.replace(
+                          /[^a-zA-Z\s]/g,
+                          "",
+                        );
                         setPersonalInfo({
                           ...personalInfo,
-                          fullName: e.target.value,
+                          fullName: filtered,
                         });
                       }}
                       className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
@@ -1074,24 +1078,16 @@ export function UserRequestPage() {
                                         )
                                       }
                                       disabled={invItem.remaining_stock <= 0}
-                                      className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center justify-between ${
+                                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
                                         invItem.remaining_stock <= 0
                                           ? "text-gray-400 line-through cursor-not-allowed"
                                           : "text-gray-900 hover:bg-blue-50 cursor-pointer"
                                       }`}
                                     >
-                                      <span>
-                                        {invItem.item_no} - {invItem.description}
-                                      </span>
-                                      <span className={`ml-4 font-semibold ${
-                                        invItem.remaining_stock <= 0
-                                          ? ""
-                                          : "text-green-600"
-                                      }`}>
-                                        {invItem.remaining_stock <= 0
-                                          ? "Out of stock"
-                                          : `${invItem.remaining_stock} ${invItem.unit}`}
-                                      </span>
+                                      {invItem.item_no} - {invItem.description}
+                                      {invItem.remaining_stock <= 0
+                                        ? " (Out of stock)"
+                                        : ""}
                                     </button>
                                   ))}
                                 </div>
@@ -1181,24 +1177,16 @@ export function UserRequestPage() {
                                         )
                                       }
                                       disabled={invItem.remaining_stock <= 0}
-                                      className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center justify-between ${
+                                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
                                         invItem.remaining_stock <= 0
                                           ? "text-gray-400 line-through cursor-not-allowed"
                                           : "text-gray-900 hover:bg-blue-50 cursor-pointer"
                                       }`}
                                     >
-                                      <span>
-                                        {invItem.description} ({invItem.item_no})
-                                      </span>
-                                      <span className={`ml-4 font-semibold ${
-                                        invItem.remaining_stock <= 0
-                                          ? ""
-                                          : "text-green-600"
-                                      }`}>
-                                        {invItem.remaining_stock <= 0
-                                          ? "Out of stock"
-                                          : `${invItem.remaining_stock} ${invItem.unit}`}
-                                      </span>
+                                      {invItem.description} ({invItem.item_no})
+                                      {invItem.remaining_stock <= 0
+                                        ? " (Out of stock)"
+                                        : ""}
                                     </button>
                                   ))}
                                 </div>
