@@ -331,7 +331,12 @@ export function InboxPage() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => navigate("/admin/login");
+  const handleLogout = () => {
+    localStorage.removeItem("facility_link_role");
+    localStorage.removeItem("facility_link_user");
+    toast.success("Logged out successfully");
+    navigate("/admin/login");
+  };
 
   const getSortedGroups = (groups: GroupedRequest[]) => {
     const sorted = [...groups];

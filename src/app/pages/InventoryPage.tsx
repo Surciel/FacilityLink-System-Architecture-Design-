@@ -822,7 +822,12 @@ export function InventoryPage() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => navigate("/admin/login");
+  const handleLogout = () => {
+    localStorage.removeItem("facility_link_role");
+    localStorage.removeItem("facility_link_user");
+    toast.success("Logged out successfully");
+    navigate("/admin/login");
+  };
 
   const getSortedInventory = (items: InventoryItem[]) => {
     const sorted = [...items];

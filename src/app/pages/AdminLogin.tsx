@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { Lock, User, LogIn, PackageOpen } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "../../supabaseClient"; // Ensure this matches your project client path
 
 export function AdminLogin() {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     username: "",
     password: "",
@@ -14,17 +16,55 @@ export function AdminLogin() {
   const ADMIN_USERNAME = (import.meta as any).env.VITE_ADMIN_USERNAME || "";
   const ADMIN_PASSWORD = (import.meta as any).env.VITE_ADMIN_PASSWORD || "";
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
 
-    if (
-      formData.username === ADMIN_USERNAME &&
-      formData.password === ADMIN_PASSWORD
-    ) {
+    try {
+      // 1. Initial Local Environment Verification
+      if (
+        formData.username !== ADMIN_USERNAME ||
+        formData.password !== ADMIN_PASSWORD
+      ) {
+        toast.error("Invalid username or password");
+        setLoading(false);
+        return;
+      }
+
+      // 2. Structural Schema Verification: Check Supabase Profiles Gatekeeper
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("access_role")
+        .eq("access_role", "admin")
+        .maybeSingle(); // Safely reads our singular fallback row instance
+
+      if (error) {
+        console.error("Database connection fault:", error.message);
+        toast.error("Database structural validation failed.");
+        setLoading(false);
+        return;
+      }
+
+      if (!profile) {
+        toast.error(
+          "Configuration Error: Admin rule entity missing from schema.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      // 3. Establish Local Client Storage State Session
+      localStorage.setItem("facility_link_role", profile.access_role);
+      localStorage.setItem("facility_link_user", formData.username);
+
+      // Success sequence
       toast.success("Login successful!");
       navigate("/admin");
-    } else {
-      toast.error("Invalid username or password");
+    } catch (err: any) {
+      console.error("Critical authentication exception:", err.message);
+      toast.error("An unexpected system exception occurred.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -36,7 +76,8 @@ export function AdminLogin() {
         {/* Back to Home */}
         <button
           onClick={() => navigate("/")}
-          className="inline-flex items-center gap-2 text-white/70 hover:text-white mb-6 transition-colors"
+          disabled={loading}
+          className="inline-flex items-center gap-2 text-white/70 hover:text-white mb-6 transition-colors disabled:opacity-50"
         >
           <svg
             className="w-5 h-5"
@@ -80,11 +121,12 @@ export function AdminLogin() {
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <input
                     type="text"
+                    disabled={loading}
                     value={formData.username}
                     onChange={(e) =>
                       setFormData({ ...formData, username: e.target.value })
                     }
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent disabled:opacity-60"
                     placeholder="Enter username"
                     required
                   />
@@ -99,11 +141,12 @@ export function AdminLogin() {
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <input
                     type="password"
+                    disabled={loading}
                     value={formData.password}
                     onChange={(e) =>
                       setFormData({ ...formData, password: e.target.value })
                     }
-                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent disabled:opacity-60"
                     placeholder="Enter password"
                     required
                   />
@@ -112,10 +155,11 @@ export function AdminLogin() {
 
               <button
                 type="submit"
-                className="w-full bg-gradient-to-r from-[#5891B8] to-[#3776A0] text-white py-3 rounded-lg hover:from-[#4A89B0] hover:to-[#2E6B95] transition-all flex items-center justify-center gap-2 shadow-lg"
+                disabled={loading}
+                className="w-full bg-gradient-to-r from-[#5891B8] to-[#3776A0] text-white py-3 rounded-lg hover:from-[#4A89B0] hover:to-[#2E6B95] transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
               >
                 <LogIn className="w-5 h-5" />
-                Sign In
+                {loading ? "Verifying System..." : "Sign In"}
               </button>
             </form>
           </div>

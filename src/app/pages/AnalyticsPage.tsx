@@ -128,7 +128,9 @@ export function AnalyticsPage() {
   const [risMonthOption, setRisMonthOption] =
     useState<string>(defaultMonthOption);
   const [risWeekOption, setRisWeekOption] = useState<string>("week1");
-  const [risDayOption, setRisDayOption] = useState<string>(getLocalISODate(new Date()));
+  const [risDayOption, setRisDayOption] = useState<string>(
+    getLocalISODate(new Date()),
+  );
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
 
   useEffect(() => {
@@ -250,7 +252,10 @@ export function AnalyticsPage() {
         // Try both full and abbreviated month name formats with "to" separator
         const periodLabelFull = `${monthName} 1 to ${lastDay.getDate()}, ${year}`;
         const periodLabelShort = `${monthShort} 1 to ${lastDay.getDate()}, ${year}`;
-        monthlyData[displayKey] = historyByPeriod[periodLabelFull] || historyByPeriod[periodLabelShort] || 0;
+        monthlyData[displayKey] =
+          historyByPeriod[periodLabelFull] ||
+          historyByPeriod[periodLabelShort] ||
+          0;
       }
     }
 
@@ -267,7 +272,9 @@ export function AnalyticsPage() {
   const fetchTopRequestedItems = async () => {
     const { data, error } = await supabase
       .from("requests")
-      .select("item_no, quantity_requested, created_at, inventory(description)");
+      .select(
+        "item_no, quantity_requested, created_at, inventory(description)",
+      );
     if (error) {
       console.error("Analytics fetchTopRequestedItems error:", error);
       toast.error("Failed to load request analytics data.");
@@ -310,11 +317,10 @@ export function AnalyticsPage() {
         .slice(0, 10)
         .map(([name, requests]) => {
           const lastMonthValue = lastMonthCounts[name] || 0;
-          const trendValue = lastMonthValue > 0
-            ? Math.round(
-                ((requests - lastMonthValue) / lastMonthValue) * 100,
-              )
-            : 0;
+          const trendValue =
+            lastMonthValue > 0
+              ? Math.round(((requests - lastMonthValue) / lastMonthValue) * 100)
+              : 0;
           const isNew = lastMonthValue === 0;
           const isHighVolume = requests >= 10;
 
@@ -323,12 +329,12 @@ export function AnalyticsPage() {
             requests,
             trend: trendValue,
             isNew,
-            trendLabel:
-              isNew ? "New" : `${trendValue > 0 ? "+" : ""}${trendValue}%`,
-            advice:
-              isNew
-                ? "New request item this month"
-                : trendValue > 0
+            trendLabel: isNew
+              ? "New"
+              : `${trendValue > 0 ? "+" : ""}${trendValue}%`,
+            advice: isNew
+              ? "New request item this month"
+              : trendValue > 0
                 ? isHighVolume
                   ? "Consider increasing stock"
                   : "Demand rising, monitor inventory"
@@ -336,10 +342,10 @@ export function AnalyticsPage() {
             adviceType: isNew
               ? "new"
               : trendValue > 0
-              ? isHighVolume
-                ? "increase"
-                : "monitor"
-              : "stable",
+                ? isHighVolume
+                  ? "increase"
+                  : "monitor"
+                : "stable",
           };
         }),
     );
@@ -361,7 +367,10 @@ export function AnalyticsPage() {
       topSix.map(([name, count], i) => ({
         fullName: name,
         name: shortenItemName(name, 18),
-        value: topSixTotal > 0 ? parseFloat(((count / topSixTotal) * 100).toFixed(1)) : 0,
+        value:
+          topSixTotal > 0
+            ? parseFloat(((count / topSixTotal) * 100).toFixed(1))
+            : 0,
         count: count,
         color: colors[i % colors.length],
       })),
@@ -448,7 +457,9 @@ export function AnalyticsPage() {
         }
 
         // ── FETCH descriptions from inventory table ──
-        const itemNos = historyItems.map((item) => item.item_no).filter(Boolean);
+        const itemNos = historyItems
+          .map((item) => item.item_no)
+          .filter(Boolean);
         const { data: inventoryDescData } = await supabase
           .from("inventory")
           .select("item_no, description")
@@ -480,9 +491,7 @@ export function AnalyticsPage() {
 
           // ── Use description from inventory table, fallback to history field ──
           const description =
-            descriptionMap[item.item_no] ||
-            item.item_description ||
-            "";
+            descriptionMap[item.item_no] || item.item_description || "";
 
           return [
             item.item_no || "",
@@ -853,13 +862,7 @@ export function AnalyticsPage() {
             item.item_description ||
             "";
 
-          return [
-            item.item_no || "",
-            description,
-            quantity,
-            quantity,
-            "",
-          ];
+          return [item.item_no || "", description, quantity, quantity, ""];
         })
         .filter((row) => {
           const quantity = row[2];
@@ -973,7 +976,9 @@ export function AnalyticsPage() {
 
       const { data: requestsData } = await supabase
         .from("requests")
-        .select("item_no, quantity_requested, requested_by, inventory(description)")
+        .select(
+          "item_no, quantity_requested, requested_by, inventory(description)",
+        )
         .ilike("item_no", `${prefix}%`)
         .gte("created_at", startOfDay.toISOString())
         .lte("created_at", endOfDay.toISOString());
@@ -1064,12 +1069,7 @@ export function AnalyticsPage() {
             `RIS No.: ${year}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-001`,
             monthName.toUpperCase(),
           ],
-          [
-            "Office : GSO",
-            "Code",
-            "SAI No.:",
-            `Date: ${risDayOption}`,
-          ],
+          ["Office : GSO", "Code", "SAI No.:", `Date: ${risDayOption}`],
         ],
         startY: 48,
         theme: "plain",
@@ -1453,6 +1453,13 @@ export function AnalyticsPage() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
+  const handleLogout = () => {
+    localStorage.removeItem("facility_link_role");
+    localStorage.removeItem("facility_link_user");
+    toast.success("Logged out successfully");
+    navigate("/admin/login");
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm fixed top-0 left-0 right-0 z-30">
@@ -1466,8 +1473,8 @@ export function AnalyticsPage() {
             </h1>
           </div>
           <button
-            onClick={() => navigate("/admin/login")}
-            className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg"
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
             <LogOut className="w-5 h-5" />
             <span className="hidden sm:inline">Logout</span>
@@ -1617,7 +1624,11 @@ export function AnalyticsPage() {
                         cursor={false}
                         contentStyle={{ pointerEvents: "none" }}
                       />
-                      <Legend verticalAlign="bottom" align="center" height={36} />
+                      <Legend
+                        verticalAlign="bottom"
+                        align="center"
+                        height={36}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1761,11 +1772,12 @@ export function AnalyticsPage() {
                           item.adviceType === "new"
                             ? "text-blue-600"
                             : item.adviceType === "increase"
-                            ? "text-orange-600"
-                            : "text-gray-500"
+                              ? "text-orange-600"
+                              : "text-gray-500"
                         }`}
                       >
-                        {item.adviceType !== "new" && item.adviceType !== "stable" ? (
+                        {item.adviceType !== "new" &&
+                        item.adviceType !== "stable" ? (
                           <AlertCircle className="w-3 h-3 text-orange-500" />
                         ) : null}
                         {item.advice}
@@ -1869,7 +1881,9 @@ export function AnalyticsPage() {
                   className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
-                  {generating === "Daily" ? "Generating..." : "Download Daily RIS"}
+                  {generating === "Daily"
+                    ? "Generating..."
+                    : "Download Daily RIS"}
                 </button>
                 <button
                   onClick={generateRISWeeklyPDF}
@@ -1877,7 +1891,9 @@ export function AnalyticsPage() {
                   className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-3 shadow-sm disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
-                  {generating === "Weekly" ? "Generating..." : "Download Weekly RIS"}
+                  {generating === "Weekly"
+                    ? "Generating..."
+                    : "Download Weekly RIS"}
                 </button>
               </div>
 
