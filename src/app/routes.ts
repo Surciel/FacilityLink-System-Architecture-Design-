@@ -13,17 +13,23 @@ export const router = createBrowserRouter([
     Component: UserRequestPage,
   },
   {
-    path: "/admin/login",
+    path: "/admin",
     Component: AdminLogin,
   },
   {
-    path: "/admin",
-    Component: AdminLayout,
-    children: [
-      { index: true, Component: Dashboard },
-      { path: "inbox", Component: InboxPage },
-      { path: "inventory", Component: InventoryPage },
-      { path: "analytics", Component: AnalyticsPage },
-    ],
+    path: "/admin/dashboard",
+    Component: Dashboard,
+  },
+  {
+    path: "/admin/inbox",
+    Component: InboxPage,
+  },
+  {
+    path: "/admin/inventory",
+    Component: InventoryPage,
+  },
+  {
+    path: "/admin/analytics",
+    Component: AnalyticsPage,
   },
 ]);

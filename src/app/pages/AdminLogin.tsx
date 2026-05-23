@@ -22,7 +22,7 @@ export function AdminLogin() {
       formData.password === ADMIN_PASSWORD
     ) {
       toast.success("Login successful!");
-      navigate("/admin");
+      navigate("/admin/dashboard");
     } else {
       toast.error("Invalid username or password");
     }

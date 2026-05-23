@@ -18,7 +18,7 @@ import {
   Info,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useNavigate } from "react-router";
+import { useNavigate, useLocation } from "react-router";
 import { supabase } from "../../supabaseClient";
 
 interface Unit {
@@ -53,6 +53,7 @@ type NewItemForm = {
 
 export function InventoryPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -177,6 +178,37 @@ export function InventoryPage() {
       }
     };
   }, []);
+
+  // Check for sort parameter in URL and apply it
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const sortParam = searchParams.get("sort");
+    if (
+      sortParam &&
+      [
+        "name-az",
+        "name-za",
+        "unit-az",
+        "unit-za",
+        "stock-high",
+        "stock-low",
+        "id-az",
+        "id-za",
+      ].includes(sortParam)
+    ) {
+      setSortOption(
+        sortParam as
+          | "name-az"
+          | "name-za"
+          | "unit-az"
+          | "unit-za"
+          | "stock-high"
+          | "stock-low"
+          | "id-az"
+          | "id-za",
+      );
+    }
+  }, [location.search]);
 
   useEffect(() => {
     localStorage.setItem("sidebarExpanded", JSON.stringify(isSidebarExpanded));
@@ -811,18 +843,20 @@ export function InventoryPage() {
     (sum, item) => sum + item.remaining_stock,
     0,
   );
-  const lowStockCount = inventory.filter(
-    (item) => item.minimum_stock && item.remaining_stock < item.minimum_stock,
-  ).length;
+  const lowStockCount = inventory.filter((item) => {
+    if (!item.minimum_stock) return false;
+    const percentage = (item.remaining_stock / item.minimum_stock) * 100;
+    return percentage < 60;
+  }).length;
 
   const menuItems = [
-    { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
+    { path: "/admin/dashboard", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/admin/inbox", icon: Inbox, label: "Inbox" },
     { path: "/admin/inventory", icon: PackageOpen, label: "Inventory" },
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => navigate("/admin/login");
+  const handleLogout = () => navigate("/admin");
 
   const getSortedInventory = (items: InventoryItem[]) => {
     const sorted = [...items];
