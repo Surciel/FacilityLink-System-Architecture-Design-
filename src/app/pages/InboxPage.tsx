@@ -12,6 +12,8 @@ import {
   LogOut,
   Trash2,
   X,
+  CheckCircle,
+  XCircle,
   ArrowUpDown,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -28,6 +30,7 @@ interface Request {
   request_group_id: string | null;
   requester_type?: "student" | "faculty" | null;
   requester_info?: string | null;
+  status: "pending" | "approved" | "rejected";
 }
 
 interface GroupedRequest {
@@ -38,6 +41,7 @@ interface GroupedRequest {
   requester_type?: "student" | "faculty" | null;
   requester_info?: string | null;
   items: Request[];
+  status: "pending" | "approved" | "rejected";
 }
 
 export function InboxPage() {
@@ -84,6 +88,7 @@ export function InboxPage() {
     const { data, error } = await supabase
       .from("requests")
       .select("*, inventory(description, unit)")
+      .select("*, inventory(description, units(name))")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -103,6 +108,7 @@ export function InboxPage() {
           created_at: req.created_at,
           requester_type: req.requester_type,
           requester_info: req.requester_info,
+          status: req.status,
           items: [],
         };
       }
@@ -212,6 +218,7 @@ export function InboxPage() {
     const { data, error } = await supabase
       .from("requests")
       .select("*, inventory(description, unit)")
+      .select("*, inventory(description, units(name))")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -233,6 +240,7 @@ export function InboxPage() {
           created_at: req.created_at,
           requester_type: req.requester_type,
           requester_info: req.requester_info,
+          status: req.status,
           items: [],
         };
       }
@@ -252,61 +260,122 @@ export function InboxPage() {
     setLoading(false);
   };
 
+  const handleApproveRequest = async (group: GroupedRequest) => {
+    if (group.status === "approved") {
+      toast.info("This request has already been approved.");
+      return;
+    }
+
+    const toastId = toast.loading("Approving request and updating stock...");
+
+    try {
+      // Use a Supabase RPC function for a real transaction
+      for (const item of group.items) {
+        const { data: inventoryItem, error: fetchError } = await supabase
+          .from("inventory")
+          .select("remaining_stock, description")
+          .eq("item_no", item.item_no)
+          .single();
+
+        if (fetchError || !inventoryItem) {
+          throw new Error(`Could not find item: ${item.item_no}`);
+        }
+
+        const newStock = inventoryItem.remaining_stock - item.quantity_requested;
+        if (newStock < 0) {
+          throw new Error(`Not enough stock for: ${inventoryItem.description}`);
+        }
+
+        const { error: stockError } = await supabase
+          .from("inventory")
+          .update({ remaining_stock: newStock })
+          .eq("item_no", item.item_no);
+
+        if (stockError) throw stockError;
+      }
+
+      const requestIds = group.items.map((item) => item.pkid);
+      const { error: statusError } = await supabase
+        .from("requests")
+        .update({ status: "approved" })
+        .in("pkid", requestIds);
+
+      if (statusError) throw statusError;
+
+      toast.success("Request approved and stock updated!", { id: toastId });
+      fetchRequests();
+    } catch (error: any) {
+      toast.error(`Approval failed: ${error.message}`, { id: toastId });
+    }
+  };
+
+  const handleRejectRequest = async (group: GroupedRequest) => {
+    if (group.status === "rejected") {
+      toast.info("This request has already been rejected.");
+      return;
+    }
+    if (group.status === "approved") {
+      toast.error(
+        "Cannot reject an approved request. Please delete it to restore stock.",
+      );
+      return;
+    }
+
+    const requestIds = group.items.map((item) => item.pkid);
+    const { error } = await supabase
+      .from("requests")
+      .update({ status: "rejected" })
+      .in("pkid", requestIds);
+
+    if (error) {
+      toast.error("Failed to reject request.");
+    } else {
+      toast.success("Request rejected.");
+      fetchRequests();
+    }
+  };
+
   const handleDelete = async () => {
     if (!groupToDelete) return;
     setDeleteLoading(true);
 
-    for (const item of groupToDelete.items) {
-      const { data: inventoryItem, error: fetchError } = await supabase
-        .from("inventory")
-        .select("remaining_stock, description")
-        .eq("item_no", item.item_no)
-        .single();
-
-      if (fetchError || !inventoryItem) {
-        toast.error(
-          `Could not fetch stock for: ${(item as any).inventory?.description || "Unknown Item"}`,
-        );
-        setDeleteLoading(false);
-        return;
+    try {
+      // If the request was approved, we need to restore the stock.
+      if (groupToDelete.status === "approved") {
+        for (const item of groupToDelete.items) {
+          // This is not a true transaction, consider a Supabase function for atomicity
+          await supabase.rpc("add_stock", {
+            item_id: item.item_no,
+            quantity: item.quantity_requested,
+          });
+        }
       }
 
-      const { error: restoreError } = await supabase
-        .from("inventory")
-        .update({
-          remaining_stock:
-            inventoryItem.remaining_stock + item.quantity_requested,
-        })
-        .eq("item_no", item.item_no);
-
-      if (restoreError) {
-        toast.error(
-          `Failed to restore stock for: ${inventoryItem.description}`,
-        );
-        setDeleteLoading(false);
-        return;
-      }
-
+      // Now, delete all request items in the group
+      const requestIds = groupToDelete.items.map((item) => item.pkid);
       const { error: deleteError } = await supabase
         .from("requests")
         .delete()
-        .eq("pkid", item.pkid);
+        .in("pkid", requestIds);
 
       if (deleteError) {
-        toast.error(
-          `Failed to delete request for: ${inventoryItem.description}`,
+        throw new Error(
+          "Failed to delete request records. Stock may have been restored without deleting the request.",
         );
-        setDeleteLoading(false);
-        return;
       }
-    }
 
-    toast.success("Request deleted and stock restored!");
-    setShowDeleteModal(false);
-    setGroupToDelete(null);
-    setSelectedGroup(null);
-    fetchRequests();
-    setDeleteLoading(false);
+      toast.success(
+        `Request ${groupToDelete.status === "approved" ? "deleted and stock restored!" : "deleted!"}`,
+      );
+      setShowDeleteModal(false);
+      setGroupToDelete(null);
+      setSelectedGroup(null);
+      fetchRequests();
+    } catch (error: any) {
+      toast.error(error.message);
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   const filteredGroups = groupedRequests.filter(
@@ -370,6 +439,21 @@ export function InboxPage() {
       default:
         return sorted;
     }
+  };
+
+  const getStatusPill = (status: GroupedRequest["status"]) => {
+    const styles = {
+      pending: "bg-yellow-100 text-yellow-800 border-yellow-200",
+      approved: "bg-green-100 text-green-800 border-green-200",
+      rejected: "bg-red-100 text-red-800 border-red-200",
+    };
+    return (
+      <span
+        className={`px-2 py-1 text-xs font-medium rounded-full border capitalize ${styles[status] || styles.pending}`}
+      >
+        {status}
+      </span>
+    );
   };
 
   return (
@@ -558,6 +642,7 @@ export function InboxPage() {
                                 ({group.department})
                               </span>
                             </div>
+                            {getStatusPill(group.status)}
                             <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
                               <Calendar className="w-3 h-3" />
                               {new Date(group.created_at).toLocaleDateString()}
@@ -599,6 +684,7 @@ export function InboxPage() {
                                 <span className="bg-[#4A89B0] text-white px-2 py-0.5 rounded text-xs font-medium">
                                   × {item.quantity_requested}{" "}
                                   {inventory?.unit || ""}
+                                  {(item as any).inventory?.units?.name || ""}
                                 </span>
                               </div>
                             );
@@ -617,6 +703,12 @@ export function InboxPage() {
                     <h3 className="text-xl font-bold text-gray-900 mb-4">
                       Request Details
                     </h3>
+                    <div className="mb-4">
+                      <label className="text-xs font-medium text-gray-500">
+                        Status
+                      </label>
+                      <div>{getStatusPill(selectedGroup.status)}</div>
+                    </div>
                     <div className="space-y-4">
                       <div>
                         <label className="text-xs font-medium text-gray-500">
@@ -680,12 +772,33 @@ export function InboxPage() {
                                 <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded font-medium">
                                   Qty: {item.quantity_requested}{" "}
                                   {(item as any).inventory?.unit || ""}
+                                  {(item as any).inventory?.units?.name || ""}
                                 </span>
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
+
+                      {/* Action Buttons */}
+                      {selectedGroup.status === "pending" && (
+                        <div className="pt-4 border-t border-gray-200 flex gap-2">
+                          <button
+                            onClick={() => handleApproveRequest(selectedGroup)}
+                            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                          >
+                            <CheckCircle className="w-5 h-5" />
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleRejectRequest(selectedGroup)}
+                            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                          >
+                            <XCircle className="w-5 h-5" />
+                            Reject
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -744,6 +857,7 @@ export function InboxPage() {
                         <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
                           +{item.quantity_requested}{" "}
                           {(item as any).inventory?.unit || ""}
+                          {(item as any).inventory?.units?.name || ""}
                         </span>
                       </div>
                     ))}

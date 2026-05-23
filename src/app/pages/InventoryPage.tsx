@@ -324,8 +324,8 @@ export function InventoryPage() {
   };
 
   const handleAddItem = async () => {
-    if (!itemIdNumber || !newItem.description) {
-      toast.error("Please fill in all required fields");
+    if (!itemIdNumber || !newItem.description || !newItem.unit_id) {
+      toast.error("Please fill in all required fields, including Item ID, Name, and Unit.");
       return;
     }
 
@@ -788,14 +788,14 @@ export function InventoryPage() {
   };
 
   const getStockStatus = (item: InventoryItem) => {
-    if (!item.minimum_stock)
+    if (!item.minimum_stock || item.minimum_stock === 0)
       return {
         label: "Unknown",
         color: "text-gray-600 bg-gray-50",
         icon: Package,
       };
     const percentage = (item.remaining_stock / item.minimum_stock) * 100;
-    if (percentage < 30)
+    if (percentage < 20)
       return {
         label: "Critical",
         color: "text-red-600 bg-red-50",
@@ -806,6 +806,12 @@ export function InventoryPage() {
         label: "Low",
         color: "text-orange-600 bg-orange-50",
         icon: TrendingDown,
+      };
+    if (percentage < 80)
+      return {
+        label: "Warning",
+        color: "text-yellow-600 bg-yellow-50",
+        icon: AlertTriangle, // Using AlertTriangle for warning too, but with different color
       };
     return {
       label: "Adequate",
@@ -1172,7 +1178,13 @@ export function InventoryPage() {
                                   </div>
                                   <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
                                     <div
-                                      className={`h-1.5 rounded-full ${percentage < 30 ? "bg-red-600" : percentage < 60 ? "bg-orange-500" : "bg-green-500"}`}
+                                      className={`h-1.5 rounded-full ${
+                                        percentage < 20
+                                          ? "bg-red-600"
+                                          : percentage < 60
+                                            ? "bg-orange-500"
+                                            : percentage < 80 ? "bg-yellow-500" : "bg-green-500"
+                                      }`}
                                       style={{
                                         width: `${Math.min(percentage, 100)}%`,
                                       }}

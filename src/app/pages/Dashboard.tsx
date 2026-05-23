@@ -78,6 +78,7 @@ export function Dashboard() {
     const { data, error } = await supabase
       .from("requests")
       .select("*, inventory(description, unit)")
+      .select("*, inventory(description, units(name))")
       .order("created_at", { ascending: false })
       .limit(30);
 
@@ -89,14 +90,15 @@ const fetchLowStockItems = async () => {
     const { data, error } = await supabase
       .from("inventory")
       .select("item_no, description, unit, remaining_stock, minimum_stock")
+      .select("item_no, description, remaining_stock, minimum_stock, units(name)")
       .order("remaining_stock", { ascending: true });
 
     if (error) return console.error(error);
-    
+
     const lowStock = (data || []).filter((item) => {
-      if (!item.minimum_stock) return false;
+      if (!item.minimum_stock || item.minimum_stock === 0) return false;
       const percentage = (item.remaining_stock / item.minimum_stock) * 100;
-      return percentage < 60; 
+      return percentage < 80; // An item needs attention if below 80%
     });  
     setLowStockItems(lowStock);
   };
@@ -400,6 +402,7 @@ const fetchLowStockItems = async () => {
                                           "Unknown Item"}{" "}
                                         ({item.quantity_requested}{" "}
                                         {inventory?.unit || ""})
+                                        {inventory?.units?.name || ""})
                                       </span>
                                     );
                                   })}
@@ -480,6 +483,7 @@ const fetchLowStockItems = async () => {
                               </div>
                               <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
                                 {item.remaining_stock} {item.unit}
+                                {item.remaining_stock} {item.units?.name || ""}
                               </span>
                             </div>
                             <div className="space-y-1">
@@ -490,11 +494,13 @@ const fetchLowStockItems = async () => {
                               <div className="w-full bg-gray-200 rounded-full h-2">
                                 <div
                                   className={`h-2 rounded-full ${
-                                    percentage < 30
+                                    percentage < 20
                                       ? "bg-red-600"
                                       : percentage < 60
                                         ? "bg-orange-500"
-                                        : "bg-green-500"
+                                        : percentage < 80
+                                          ? "bg-yellow-500"
+                                          : "bg-green-500"
                                   }`}
                                   style={{ width: `${percentage}%` }}
                                 />

@@ -83,6 +83,7 @@ export function AnalyticsPage() {
   const [generating, setGenerating] = useState<string | null>(null);
   const [selectedCategoryDetail, setSelectedCategoryDetail] =
     useState<any>(null);
+  const [snapshotting, setSnapshotting] = useState(false);
   const [showCategoryDetailModal, setShowCategoryDetailModal] = useState(false);
 
   const [monthlyTrendData, setMonthlyTrendData] = useState<any[]>([]);
@@ -1443,6 +1444,93 @@ export function AnalyticsPage() {
       console.error(err);
     } finally {
       setGenerating(null);
+    }
+  };
+
+  const handleCreateMonthlySnapshot = async () => {
+    setSnapshotting(true);
+    toast.info("Starting monthly snapshot process... This may take a moment.");
+
+    try {
+      const now = new Date();
+      const previousMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const year = previousMonthDate.getFullYear();
+      const monthIndex = previousMonthDate.getMonth();
+
+      const firstDayOfMonth = new Date(year, monthIndex, 1);
+      const lastDayOfMonth = new Date(year, monthIndex + 1, 0);
+
+      const periodLabel = `${fullMonths[monthIndex]} 1 to ${lastDayOfMonth.getDate()}, ${year}`;
+
+      const { data: existingSnapshot, error: checkError } = await supabase
+        .from("inventory_history")
+        .select("pkid")
+        .eq("period_label", periodLabel)
+        .limit(1);
+
+      if (checkError) throw checkError;
+      if (existingSnapshot && existingSnapshot.length > 0) {
+        toast.warning(`Snapshot for ${periodLabel} already exists.`);
+        setSnapshotting(false);
+        return;
+      }
+
+      const { data: inventoryItems, error: invError } = await supabase
+        .from("inventory")
+        .select("item_no, description, remaining_stock, unit_cost, units(name)");
+      if (invError) throw invError;
+
+      const { data: requests, error: reqError } = await supabase
+        .from("requests")
+        .select("item_no, quantity_requested, created_at")
+        .gte("created_at", firstDayOfMonth.toISOString())
+        .lte("created_at", lastDayOfMonth.toISOString());
+      if (reqError) throw reqError;
+
+      const { data: deliveries, error: delError } = await supabase
+        .from("deliveries")
+        .select("item_no, quantity_delivered")
+        .gte("delivery_date", getLocalISODate(firstDayOfMonth))
+        .lte("delivery_date", getLocalISODate(lastDayOfMonth));
+      if (delError) throw delError;
+
+      const historyToInsert = [];
+
+      for (const item of inventoryItems || []) {
+        const issuedThisMonth = (requests || [])
+          .filter((r) => r.item_no === item.item_no)
+          .reduce((sum, r) => sum + r.quantity_requested, 0);
+
+        const deliveredThisMonth = (deliveries || [])
+          .filter((d) => d.item_no === item.item_no)
+          .reduce((sum, d) => sum + d.quantity_delivered, 0);
+
+        const stock_on_hand = item.remaining_stock - deliveredThisMonth + issuedThisMonth;
+
+        const week1 = (requests || []).filter(r => new Date(r.created_at).getDate() <= 8 && r.item_no === item.item_no).reduce((s, r) => s + r.quantity_requested, 0);
+        const week2 = (requests || []).filter(r => new Date(r.created_at).getDate() > 8 && new Date(r.created_at).getDate() <= 15 && r.item_no === item.item_no).reduce((s, r) => s + r.quantity_requested, 0);
+        const week3 = (requests || []).filter(r => new Date(r.created_at).getDate() > 15 && new Date(r.created_at).getDate() <= 22 && r.item_no === item.item_no).reduce((s, r) => s + r.quantity_requested, 0);
+        const week4 = (requests || []).filter(r => new Date(r.created_at).getDate() > 22 && r.item_no === item.item_no).reduce((s, r) => s + r.quantity_requested, 0);
+
+        historyToInsert.push({
+          item_no: item.item_no, period_label: periodLabel, item_description: item.description,
+          stock_on_hand: stock_on_hand, week1, week2, week3, week4,
+          total_qty_issued: issuedThisMonth, unit_cost: item.unit_cost,
+        });
+      }
+
+      if (historyToInsert.length > 0) {
+        const { error: insertError } = await supabase.from("inventory_history").insert(historyToInsert);
+        if (insertError) throw insertError;
+      }
+
+      toast.success(`Successfully created snapshot for ${periodLabel}.`);
+      await fetchAvailableMonths();
+    } catch (error: any) {
+      toast.error(`Snapshot failed: ${error.message}`);
+      console.error(error);
+    } finally {
+      setSnapshotting(false);
     }
   };
 

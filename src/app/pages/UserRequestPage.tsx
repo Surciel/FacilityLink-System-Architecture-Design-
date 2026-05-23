@@ -547,6 +547,7 @@ export function UserRequestPage() {
         department: department,
         request_group_id: requestGroupId,
         created_at: phTime.toISOString(),
+        status: "pending", // Set initial status to pending
       }));
 
       const { error: requestsInsertError } = await supabase
@@ -560,24 +561,8 @@ export function UserRequestPage() {
         return;
       }
 
-      // Step 4: Update inventory stock for all items
-      for (const item of validatedItems) {
-        const { error: stockError } = await supabase
-          .from("inventory")
-          .update({
-            remaining_stock: item.currentStock - item.quantity,
-          })
-          .eq("item_no", item.id);
-
-        if (stockError) {
-          toast.error(
-            `Failed to update stock for: ${item.inventoryDescription}`,
-          );
-          console.error(stockError);
-          setSubmitting(false);
-          return;
-        }
-      }
+      // STEP 4 REMOVED: Stock is no longer deducted on submission.
+      // It will be deducted by an admin upon approval in the Inbox.
 
       toast.success("Request submitted successfully!");
       setCurrentStep(3);
