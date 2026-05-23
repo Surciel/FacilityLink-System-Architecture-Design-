@@ -155,7 +155,7 @@ export function UserRequestPage() {
 
       const { data, error } = await supabase
         .from("inventory")
-        .select("item_no, description, unit, remaining_stock")
+        .select("item_no, description, unit_id, units(name), remaining_stock")
         .ilike("item_no", `${facilityPrefix}%`)
         .order("item_no", { ascending: true });
 
@@ -212,7 +212,7 @@ export function UserRequestPage() {
 
     const { data, error } = await supabase
       .from("inventory")
-      .select("item_no, description, unit")
+      .select("item_no, description, unit_id, units(name)")
       .ilike(searchBy === "id" ? "item_no" : "description", `%${searchTerm}%`)
       .ilike("item_no", `${facilityPrefix}%`) // Filter by facility prefix
       .limit(10);
@@ -365,7 +365,7 @@ export function UserRequestPage() {
     // Build the query based on which field was searched
     let query = supabase
       .from("inventory")
-      .select("item_no, description, unit, remaining_stock");
+      .select("item_no, description, unit_id, units(name), remaining_stock");
 
     if (searchBy === "id") {
       query = query.eq("item_no", suggestion);
@@ -378,7 +378,11 @@ export function UserRequestPage() {
       personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
     query = query.ilike("item_no", `${facilityPrefix}%`);
 
-    const { data, error } = await query.single();
+    const { data, error } = await query
+      .select(
+        "item_no, description, unit_id, units!inner(name), remaining_stock",
+      )
+      .single();
 
     if (error || !data) return;
 
@@ -394,7 +398,7 @@ export function UserRequestPage() {
               ...item,
               id: data.item_no,
               itemDescription: data.description,
-              unitOfMeasure: data.unit,
+              unitOfMeasure: (data.units as any)?.name || "",
               suggestions: [],
               showSuggestions: false,
               suggestionsFor: undefined,
@@ -418,6 +422,10 @@ export function UserRequestPage() {
     }
 
     console.log("Selected item:", selectedItem);
+    console.log(
+      "Unit name from selected item:",
+      (selectedItem.units as any)?.name,
+    );
 
     setItems(
       items.map((item, idx) =>
@@ -426,7 +434,7 @@ export function UserRequestPage() {
               ...item,
               id: selectedItem.item_no,
               itemDescription: selectedItem.description,
-              unitOfMeasure: selectedItem.unit,
+              unitOfMeasure: (selectedItem.units as any)?.name || "",
               quantity: 1,
               suggestions: [],
               showSuggestions: false,
@@ -497,7 +505,7 @@ export function UserRequestPage() {
       for (const item of items) {
         const { data: inventoryItem, error: fetchError } = await supabase
           .from("inventory")
-          .select("item_no, description, unit, remaining_stock")
+          .select("item_no, description, unit_id, units(name), remaining_stock")
           .eq("item_no", item.id)
           .ilike("item_no", `${facilityPrefix}%`)
           .single();
@@ -512,7 +520,7 @@ export function UserRequestPage() {
 
         if (item.quantity > inventoryItem.remaining_stock) {
           toast.error(
-            `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${inventoryItem.unit}(s) available.`,
+            `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${(inventoryItem.units as any)?.name}(s) available.`,
           );
           setSubmitting(false);
           return;
@@ -521,7 +529,7 @@ export function UserRequestPage() {
         validatedItems.push({
           ...item,
           inventoryDescription: inventoryItem.description,
-          inventoryUnit: inventoryItem.unit,
+          inventoryUnit: (inventoryItem.units as any)?.name || "",
           currentStock: inventoryItem.remaining_stock,
         });
       }
@@ -1067,29 +1075,40 @@ export function UserRequestPage() {
                                     overflowY: "auto",
                                   }}
                                 >
-                                  {availableItems.map((invItem) => (
-                                    <button
-                                      key={invItem.item_no}
-                                      type="button"
-                                      onClick={() =>
-                                        selectFromDropdown(
-                                          index,
-                                          invItem.item_no,
-                                        )
-                                      }
-                                      disabled={invItem.remaining_stock <= 0}
-                                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                                        invItem.remaining_stock <= 0
-                                          ? "text-gray-400 line-through cursor-not-allowed"
-                                          : "text-gray-900 hover:bg-blue-50 cursor-pointer"
-                                      }`}
-                                    >
-                                      {invItem.item_no} - {invItem.description}
-                                      {invItem.remaining_stock <= 0
-                                        ? " (Out of stock)"
-                                        : ""}
-                                    </button>
-                                  ))}
+                                  {availableItems
+                                    .filter(
+                                      (invItem) =>
+                                        items[index].id === invItem.item_no ||
+                                        !items.some(
+                                          (item, idx) =>
+                                            idx !== index &&
+                                            item.id === invItem.item_no,
+                                        ),
+                                    )
+                                    .map((invItem) => (
+                                      <button
+                                        key={invItem.item_no}
+                                        type="button"
+                                        onClick={() =>
+                                          selectFromDropdown(
+                                            index,
+                                            invItem.item_no,
+                                          )
+                                        }
+                                        disabled={invItem.remaining_stock <= 0}
+                                        className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                          invItem.remaining_stock <= 0
+                                            ? "text-gray-400 line-through cursor-not-allowed"
+                                            : "text-gray-900 hover:bg-blue-50 cursor-pointer"
+                                        }`}
+                                      >
+                                        {invItem.item_no} -{" "}
+                                        {invItem.description}
+                                        {invItem.remaining_stock <= 0
+                                          ? " (Out of stock)"
+                                          : ""}
+                                      </button>
+                                    ))}
                                 </div>
                               )}
 
@@ -1166,29 +1185,40 @@ export function UserRequestPage() {
                                     overflowY: "auto",
                                   }}
                                 >
-                                  {availableItems.map((invItem) => (
-                                    <button
-                                      key={invItem.item_no}
-                                      type="button"
-                                      onClick={() =>
-                                        selectFromDropdown(
-                                          index,
-                                          invItem.item_no,
+                                  {availableItems
+                                    .filter(
+                                      (invItem) =>
+                                        items[index].id === invItem.item_no ||
+                                        !items.some(
+                                          (item, idx) =>
+                                            idx !== index &&
+                                            item.id === invItem.item_no,
+                                        ),
+                                    )
+                                    .map((invItem) => (
+                                      <button
+                                        key={invItem.item_no}
+                                        type="button"
+                                        onClick={() =>
+                                          selectFromDropdown(
+                                            index,
+                                            invItem.item_no,
+                                          )
+                                        }
+                                        disabled={invItem.remaining_stock <= 0}
+                                        className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                          invItem.remaining_stock <= 0
+                                            ? "text-gray-400 line-through cursor-not-allowed"
+                                            : "text-gray-900 hover:bg-blue-50 cursor-pointer"
+                                        }`}
+                                      >
+                                        {invItem.description} ({invItem.item_no}
                                         )
-                                      }
-                                      disabled={invItem.remaining_stock <= 0}
-                                      className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                                        invItem.remaining_stock <= 0
-                                          ? "text-gray-400 line-through cursor-not-allowed"
-                                          : "text-gray-900 hover:bg-blue-50 cursor-pointer"
-                                      }`}
-                                    >
-                                      {invItem.description} ({invItem.item_no})
-                                      {invItem.remaining_stock <= 0
-                                        ? " (Out of stock)"
-                                        : ""}
-                                    </button>
-                                  ))}
+                                        {invItem.remaining_stock <= 0
+                                          ? " (Out of stock)"
+                                          : ""}
+                                      </button>
+                                    ))}
                                 </div>
                               )}
 

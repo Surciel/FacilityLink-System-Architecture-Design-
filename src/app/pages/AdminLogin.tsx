@@ -8,61 +8,65 @@ export function AdminLogin() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
-    username: "",
+    email: "",
     password: "",
   });
-
-  // Preset credentials from environment variables
-  const ADMIN_USERNAME = (import.meta as any).env.VITE_ADMIN_USERNAME || "";
-  const ADMIN_PASSWORD = (import.meta as any).env.VITE_ADMIN_PASSWORD || "";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // 1. Initial Local Environment Verification
-      if (
-        formData.username !== ADMIN_USERNAME ||
-        formData.password !== ADMIN_PASSWORD
-      ) {
-        toast.error("Invalid username or password");
+      // 1. Authenticate with Supabase using email/password
+      const { data, error: authError } = await supabase.auth.signInWithPassword(
+        {
+          email: formData.email,
+          password: formData.password,
+        },
+      );
+
+      if (authError || !data.user) {
+        console.error("Authentication error:", authError?.message);
+        toast.error("Invalid email or password");
         setLoading(false);
         return;
       }
 
-      // 2. Structural Schema Verification: Check Supabase Profiles Gatekeeper
-      const { data: profile, error } = await supabase
+      // 2. Verify admin role from profiles table
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("access_role")
+        .eq("user_id", data.user.id)
         .eq("access_role", "admin")
-        .maybeSingle(); // Safely reads our singular fallback row instance
+        .maybeSingle();
 
-      if (error) {
-        console.error("Database connection fault:", error.message);
-        toast.error("Database structural validation failed.");
+      if (profileError) {
+        console.error("Profile fetch error:", profileError.message);
+        // Sign out if profile check fails
+        await supabase.auth.signOut();
+        toast.error("Failed to verify admin role");
         setLoading(false);
         return;
       }
 
       if (!profile) {
-        toast.error(
-          "Configuration Error: Admin rule entity missing from schema.",
-        );
+        // Sign out if user is not admin
+        await supabase.auth.signOut();
+        toast.error("You do not have admin access");
         setLoading(false);
         return;
       }
 
-      // 3. Establish Local Client Storage State Session
+      // 3. Store admin role in localStorage for client-side checks
       localStorage.setItem("facility_link_role", profile.access_role);
-      localStorage.setItem("facility_link_user", formData.username);
+      localStorage.setItem("facility_link_user", data.user.email || "");
 
       // Success sequence
       toast.success("Login successful!");
       navigate("/admin");
     } catch (err: any) {
       console.error("Critical authentication exception:", err.message);
-      toast.error("An unexpected system exception occurred.");
+      toast.error("An unexpected error occurred");
     } finally {
       setLoading(false);
     }
@@ -115,19 +119,19 @@ export function AdminLogin() {
             <form onSubmit={handleSubmit} className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Username
+                  Email
                 </label>
                 <div className="relative">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <input
-                    type="text"
+                    type="email"
                     disabled={loading}
-                    value={formData.username}
+                    value={formData.email}
                     onChange={(e) =>
-                      setFormData({ ...formData, username: e.target.value })
+                      setFormData({ ...formData, email: e.target.value })
                     }
                     className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent disabled:opacity-60"
-                    placeholder="Enter username"
+                    placeholder="Enter admin email"
                     required
                   />
                 </div>
@@ -159,7 +163,7 @@ export function AdminLogin() {
                 className="w-full bg-gradient-to-r from-[#5891B8] to-[#3776A0] text-white py-3 rounded-lg hover:from-[#4A89B0] hover:to-[#2E6B95] transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
               >
                 <LogIn className="w-5 h-5" />
-                {loading ? "Verifying System..." : "Sign In"}
+                {loading ? "Signing In..." : "Sign In"}
               </button>
             </form>
           </div>

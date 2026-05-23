@@ -74,16 +74,37 @@ export function InboxPage() {
     null,
   );
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
     null,
   );
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Authentication and session check
+  useEffect(() => {
+    const checkAuth = async () => {
+      const role = localStorage.getItem("facility_link_role");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (role !== "admin" || !session) {
+        toast.error("Unauthorized access. Please login as admin.");
+        navigate("/admin/login");
+      }
+    };
+
+    checkAuth();
+  }, [navigate]);
+
   const fetchRequestsRealtime = async () => {
     const { data, error } = await supabase
       .from("requests")
-      .select("*, inventory(description, unit)")
+      .select(
+        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, inventory(description, unit_id, units(name))",
+      )
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -207,11 +228,18 @@ export function InboxPage() {
     localStorage.setItem("sidebarPinned", JSON.stringify(isSidebarPinned));
   }, [isSidebarPinned]);
 
+  // Reset to first page when search or sort changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, sortOption]);
+
   const fetchRequests = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("requests")
-      .select("*, inventory(description, unit)")
+      .select(
+        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, inventory(description, unit_id, units(name))",
+      )
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -331,7 +359,8 @@ export function InboxPage() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem("facility_link_role");
     localStorage.removeItem("facility_link_user");
     toast.success("Logged out successfully");
@@ -376,6 +405,13 @@ export function InboxPage() {
         return sorted;
     }
   };
+
+  // Pagination calculations
+  const sortedAndFilteredGroups = getSortedGroups(filteredGroups);
+  const totalPages = Math.ceil(sortedAndFilteredGroups.length / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedGroups = sortedAndFilteredGroups.slice(startIndex, endIndex);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -464,7 +500,7 @@ export function InboxPage() {
 
             {/* Filters */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Search
@@ -516,12 +552,92 @@ export function InboxPage() {
                   </select>
                 </div>
               </div>
-              <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
-                <Filter className="w-4 h-4" />
-                <span>
-                  Showing {filteredGroups.length} of {groupedRequests.length}{" "}
-                  requests
-                </span>
+
+              {/* Pagination Controls */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <Filter className="w-4 h-4" />
+                  <span>
+                    Showing {startIndex + 1}-
+                    {Math.min(endIndex, sortedAndFilteredGroups.length)} of{" "}
+                    {sortedAndFilteredGroups.length} requests
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {/* Items per page selector */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-600">Show:</label>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </div>
+
+                  {/* Pagination buttons */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() =>
+                        setCurrentPage(Math.max(1, currentPage - 1))
+                      }
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      ←
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <span className="text-sm text-gray-600">Page</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={currentPage}
+                        onChange={(e) => {
+                          const inputValue = e.target.value.replace(/\D/g, "");
+                          if (inputValue === "") {
+                            setCurrentPage(1);
+                          } else {
+                            const pageNum = Math.max(
+                              1,
+                              Math.min(Number(inputValue), totalPages),
+                            );
+                            setCurrentPage(pageNum);
+                          }
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.select();
+                        }}
+                        onMouseUp={(e) => {
+                          e.currentTarget.select();
+                        }}
+                        style={{
+                          MozAppearance: "textfield",
+                        }}
+                        className="w-12 px-2 py-1 border border-gray-300 rounded text-sm text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <span className="text-sm text-gray-600">
+                        of {Math.max(1, totalPages)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() =>
+                        setCurrentPage(Math.min(totalPages, currentPage + 1))
+                      }
+                      disabled={currentPage >= totalPages}
+                      className="px-3 py-1 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -539,7 +655,7 @@ export function InboxPage() {
                     <p className="text-gray-600">No requests found</p>
                   </div>
                 ) : (
-                  getSortedGroups(filteredGroups).map((group) => (
+                  paginatedGroups.map((group) => (
                     <div
                       key={group.group_id}
                       ref={(el) => {
@@ -603,7 +719,7 @@ export function InboxPage() {
                                 </span>
                                 <span className="bg-[#4A89B0] text-white px-2 py-0.5 rounded text-xs font-medium">
                                   × {item.quantity_requested}{" "}
-                                  {inventory?.unit || ""}
+                                  {inventory?.units?.name || ""}
                                 </span>
                               </div>
                             );
@@ -684,7 +800,7 @@ export function InboxPage() {
                                 </span>
                                 <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded font-medium">
                                   Qty: {item.quantity_requested}{" "}
-                                  {(item as any).inventory?.unit || ""}
+                                  {(item as any).inventory?.units?.name || ""}
                                 </span>
                               </div>
                             </div>
@@ -748,7 +864,7 @@ export function InboxPage() {
                         </span>
                         <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
                           +{item.quantity_requested}{" "}
-                          {(item as any).inventory?.unit || ""}
+                          {(item as any).inventory?.units?.name || ""}
                         </span>
                       </div>
                     ))}

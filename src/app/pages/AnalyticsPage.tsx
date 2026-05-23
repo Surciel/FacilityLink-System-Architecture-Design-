@@ -38,7 +38,8 @@ import autoTable from "jspdf-autotable";
 interface InventoryItem {
   item_no: string;
   description: string;
-  unit: string;
+  unit_id: string;
+  units?: { name: string };
   remaining_stock: number;
   minimum_stock?: number;
   unit_cost?: number;
@@ -133,6 +134,23 @@ export function AnalyticsPage() {
   );
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
 
+  // Authentication and session check
+  useEffect(() => {
+    const checkAuth = async () => {
+      const role = localStorage.getItem("facility_link_role");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (role !== "admin" || !session) {
+        toast.error("Unauthorized access. Please login as admin.");
+        navigate("/admin/login");
+      }
+    };
+
+    checkAuth();
+  }, [navigate]);
+
   useEffect(() => {
     fetchAllData();
   }, []);
@@ -168,7 +186,7 @@ export function AnalyticsPage() {
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const { data } = await supabase
       .from("requests")
-      .select("created_at")
+      .select("created_at", { count: "exact", head: true })
       .gte("created_at", sevenDaysAgo.toISOString());
     setTotalRequestsWeek(data?.length || 0);
   };
@@ -212,14 +230,14 @@ export function AnalyticsPage() {
 
     const { data: allHistoryData } = await supabase
       .from("inventory_history")
-      .select("*");
+      .select("period_label, quantity_used");
 
     const historyByPeriod: Record<string, number> = {};
     (allHistoryData || []).forEach((row) => {
       const label = row.period_label;
       if (label) {
         historyByPeriod[label] =
-          (historyByPeriod[label] || 0) + (row.total_qty_issued || 0);
+          (historyByPeriod[label] || 0) + (row.quantity_used || 0);
       }
     });
 
@@ -273,7 +291,7 @@ export function AnalyticsPage() {
     const { data, error } = await supabase
       .from("requests")
       .select(
-        "item_no, quantity_requested, created_at, inventory(description)",
+        "item_no, quantity_requested, created_at, inventory(description, unit_id, units(name))",
       );
     if (error) {
       console.error("Analytics fetchTopRequestedItems error:", error);
@@ -746,7 +764,9 @@ export function AnalyticsPage() {
           const lastDay = new Date(year, monthIndex, endDay);
           const { data: requestsData } = await supabase
             .from("requests")
-            .select("item_no, quantity_requested, inventory(description)")
+            .select(
+              "item_no, quantity_requested, inventory(description, unit_id, units(name))",
+            )
             .gte("created_at", firstDay.toISOString())
             .lte("created_at", lastDay.toISOString());
 
@@ -977,7 +997,7 @@ export function AnalyticsPage() {
       const { data: requestsData } = await supabase
         .from("requests")
         .select(
-          "item_no, quantity_requested, requested_by, inventory(description)",
+          "item_no, quantity_requested, requested_by, inventory(description, unit_id, units(name))",
         )
         .ilike("item_no", `${prefix}%`)
         .gte("created_at", startOfDay.toISOString())
@@ -1205,7 +1225,9 @@ export function AnalyticsPage() {
 
       const { data: inventoryData } = await supabase
         .from("inventory")
-        .select("item_no, description, unit_cost, remaining_stock")
+        .select(
+          "item_no, description, unit_cost, remaining_stock, unit_id, units(name)",
+        )
         .ilike("item_no", `${prefix}%`)
         .order("item_no", { ascending: true });
 
@@ -1453,7 +1475,8 @@ export function AnalyticsPage() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem("facility_link_role");
     localStorage.removeItem("facility_link_user");
     toast.success("Logged out successfully");

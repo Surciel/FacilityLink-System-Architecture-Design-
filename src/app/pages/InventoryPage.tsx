@@ -117,6 +117,23 @@ export function InventoryPage() {
     null,
   );
 
+  // Authentication and session check
+  useEffect(() => {
+    const checkAuth = async () => {
+      const role = localStorage.getItem("facility_link_role");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (role !== "admin" || !session) {
+        toast.error("Unauthorized access. Please login as admin.");
+        navigate("/admin/login");
+      }
+    };
+
+    checkAuth();
+  }, [navigate]);
+
   useEffect(() => {
     fetchInventory();
     fetchAvailableUnits();
@@ -190,14 +207,20 @@ export function InventoryPage() {
     setLoading(true);
     const { data, error } = await supabase
       .from("inventory")
-      .select("*, units!inner(pkid, name)")
+      .select(
+        "item_no, description, unit_id, remaining_stock, minimum_stock, units!inner(pkid, name)",
+      )
       .order("description", { ascending: true });
 
     if (error) {
       toast.error("Failed to load inventory");
       console.error(error);
     } else {
-      setInventory(data || []);
+      const mappedData = (data || []).map((item) => ({
+        ...item,
+        units: Array.isArray(item.units) ? item.units[0] : item.units,
+      }));
+      setInventory(mappedData);
     }
     setLoading(false);
   };
@@ -822,7 +845,8 @@ export function InventoryPage() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem("facility_link_role");
     localStorage.removeItem("facility_link_user");
     toast.success("Logged out successfully");

@@ -43,6 +43,23 @@ export function Dashboard() {
     null,
   );
 
+  // Authentication and session check
+  useEffect(() => {
+    const checkAuth = async () => {
+      const role = localStorage.getItem("facility_link_role");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (role !== "admin" || !session) {
+        toast.error("Unauthorized access. Please login as admin.");
+        navigate("/admin/login");
+      }
+    };
+
+    checkAuth();
+  }, [navigate]);
+
   useEffect(() => {
     fetchDashboardData();
 
@@ -139,19 +156,67 @@ export function Dashboard() {
   const fetchRequests = async () => {
     const { data, error } = await supabase
       .from("requests")
-      .select("*, inventory(description, unit)")
+      .select(
+        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id",
+      )
       .order("created_at", { ascending: false })
       .limit(30);
 
-    if (error) return console.error(error);
-    setRequests(data || []);
+    if (error) {
+      console.error("Error fetching requests:", error.message, error.details);
+      toast.error(`Failed to fetch requests: ${error.message}`);
+      return;
+    }
+
+    console.log("Requests fetched:", data?.length || 0);
+
+    // Fetch inventory data for each request
+    if (data && data.length > 0) {
+      const itemNos = [...new Set(data.map((req) => req.item_no))];
+      console.log("Fetching inventory for items:", itemNos);
+
+      const { data: inventoryData, error: invError } = await supabase
+        .from("inventory")
+        .select("item_no, description, unit_id, units(name)")
+        .in("item_no", itemNos);
+
+      if (invError) {
+        console.error(
+          "Error fetching inventory:",
+          invError.message,
+          invError.details,
+        );
+        toast.error(`Failed to fetch inventory: ${invError.message}`);
+        setRequests(data);
+        return;
+      }
+
+      if (inventoryData) {
+        // Map inventory data to requests
+        const inventoryMap = new Map(
+          inventoryData.map((inv) => [inv.item_no, inv]),
+        );
+        const enrichedData = data.map((req) => ({
+          ...req,
+          inventory: inventoryMap.get(req.item_no),
+        }));
+        setRequests(enrichedData);
+      } else {
+        setRequests(data);
+      }
+    } else {
+      setRequests(data || []);
+    }
   };
 
   const fetchLowStockItems = async () => {
     const { data, error } = await supabase
       .from("inventory")
-      .select("item_no, description, unit, remaining_stock, minimum_stock")
-      .order("remaining_stock", { ascending: true });
+      .select(
+        "item_no, description, unit_id, remaining_stock, minimum_stock, units(name)",
+      )
+      .order("remaining_stock", { ascending: true })
+      .limit(100);
 
     if (error) return console.error(error);
     // Filter items where remaining_stock < minimum_stock
@@ -194,7 +259,8 @@ export function Dashboard() {
     { path: "/admin/analytics", icon: BarChart3, label: "Analytics Report" },
   ];
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     localStorage.removeItem("facility_link_role");
     localStorage.removeItem("facility_link_user");
     toast.success("Logged out successfully");
@@ -465,7 +531,7 @@ export function Dashboard() {
                                         {inventory?.description ||
                                           "Unknown Item"}{" "}
                                         ({item.quantity_requested}{" "}
-                                        {inventory?.unit || ""})
+                                        {inventory?.units?.name || ""})
                                       </span>
                                     );
                                   })}
@@ -532,7 +598,7 @@ export function Dashboard() {
                               </div>
                             </div>
                             <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
-                              {item.remaining_stock} {item.unit}
+                              {item.remaining_stock} {item.units?.name}
                             </span>
                           </div>
                           <div className="space-y-1">
