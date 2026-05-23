@@ -1014,7 +1014,6 @@ export function InventoryPage() {
                     <option value="JMS">JMS</option>
                     <option value="GYM">GYM</option>
                   </select>
-                  <q></q>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
