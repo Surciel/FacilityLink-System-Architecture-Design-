@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
   ArrowUpDown,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate, useLocation } from "react-router";
@@ -28,6 +29,7 @@ interface Request {
   request_group_id: string | null;
   requester_type?: "student" | "faculty" | null;
   requester_info?: string | null;
+  status?: string;
 }
 
 interface GroupedRequest {
@@ -38,6 +40,7 @@ interface GroupedRequest {
   requester_type?: "student" | "faculty" | null;
   requester_info?: string | null;
   items: Request[];
+  status?: string;
 }
 
 export function InboxPage() {
@@ -69,11 +72,6 @@ export function InboxPage() {
     return stored ? JSON.parse(stored) : false;
   });
   const [loading, setLoading] = useState(true);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [groupToDelete, setGroupToDelete] = useState<GroupedRequest | null>(
-    null,
-  );
-  const [deleteLoading, setDeleteLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -103,7 +101,7 @@ export function InboxPage() {
     const { data, error } = await supabase
       .from("requests")
       .select(
-        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, inventory(description, unit_id, units(name))",
+        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, status, inventory(description, unit_id, units(name))",
       )
       .order("created_at", { ascending: false });
 
@@ -124,6 +122,7 @@ export function InboxPage() {
           created_at: req.created_at,
           requester_type: req.requester_type,
           requester_info: req.requester_info,
+          status: req.status || "pending",
           items: [],
         };
       }
@@ -238,7 +237,7 @@ export function InboxPage() {
     const { data, error } = await supabase
       .from("requests")
       .select(
-        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, inventory(description, unit_id, units(name))",
+        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, status, inventory(description, unit_id, units(name))",
       )
       .order("created_at", { ascending: false });
 
@@ -261,6 +260,7 @@ export function InboxPage() {
           created_at: req.created_at,
           requester_type: req.requester_type,
           requester_info: req.requester_info,
+          status: req.status || "pending",
           items: [],
         };
       }
@@ -280,61 +280,57 @@ export function InboxPage() {
     setLoading(false);
   };
 
-  const handleDelete = async () => {
-    if (!groupToDelete) return;
-    setDeleteLoading(true);
-
-    for (const item of groupToDelete.items) {
-      const { data: inventoryItem, error: fetchError } = await supabase
+  const handleApproveRequest = async (group: GroupedRequest) => {
+    setLoading(true);
+    try {
+      const itemIds = group.items.map(i => i.item_no);
+      const { data: inventoryItems, error: fetchError } = await supabase
         .from("inventory")
-        .select("remaining_stock, description")
-        .eq("item_no", item.item_no)
-        .single();
+        .select("item_no, remaining_stock")
+        .in("item_no", itemIds);
 
-      if (fetchError || !inventoryItem) {
-        toast.error(
-          `Could not fetch stock for: ${(item as any).inventory?.description || "Unknown Item"}`,
-        );
-        setDeleteLoading(false);
-        return;
+      if (fetchError || !inventoryItems) throw fetchError;
+
+      for (const item of group.items) {
+        const invItem = inventoryItems.find(i => i.item_no === item.item_no);
+        if (!invItem || invItem.remaining_stock < item.quantity_requested) {
+          toast.error(`Insufficient stock for ${(item as any).inventory?.description}. Cannot approve.`);
+          setLoading(false); return;
+        }
       }
 
-      const { error: restoreError } = await supabase
-        .from("inventory")
-        .update({
-          remaining_stock:
-            inventoryItem.remaining_stock + item.quantity_requested,
-        })
-        .eq("item_no", item.item_no);
+      await Promise.all(group.items.map(async (item) => {
+        const invItem = inventoryItems.find(i => i.item_no === item.item_no)!;
+        return supabase.from("inventory")
+          .update({ remaining_stock: invItem.remaining_stock - item.quantity_requested })
+          .eq("item_no", item.item_no);
+      }));
 
-      if (restoreError) {
-        toast.error(
-          `Failed to restore stock for: ${inventoryItem.description}`,
-        );
-        setDeleteLoading(false);
-        return;
-      }
+      const pkidList = group.items.map(i => i.pkid);
+      await supabase.from("requests").update({ status: 'approved' }).in("pkid", pkidList);
 
-      const { error: deleteError } = await supabase
-        .from("requests")
-        .delete()
-        .eq("pkid", item.pkid);
-
-      if (deleteError) {
-        toast.error(
-          `Failed to delete request for: ${inventoryItem.description}`,
-        );
-        setDeleteLoading(false);
-        return;
-      }
+      toast.success("Request approved and stock updated!");
+      fetchRequests();
+    } catch (err) {
+      toast.error("Error approving request.");
+    } finally {
+      setLoading(false);
     }
+  };
 
-    toast.success("Request deleted and stock restored!");
-    setShowDeleteModal(false);
-    setGroupToDelete(null);
-    setSelectedGroup(null);
-    fetchRequests();
-    setDeleteLoading(false);
+  const handleRejectRequest = async (group: GroupedRequest) => {
+    setLoading(true);
+    try {
+      const pkidList = group.items.map(i => i.pkid);
+      await supabase.from("requests").update({ status: 'rejected' }).in("pkid", pkidList);
+      
+      toast.success("Request rejected.");
+      fetchRequests();
+    } catch (err) {
+      toast.error("Error rejecting request.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filteredGroups = groupedRequests.filter(
@@ -655,71 +651,93 @@ export function InboxPage() {
                     <p className="text-gray-600">No requests found</p>
                   </div>
                 ) : (
-                  paginatedGroups.map((group) => (
+                  paginatedGroups.map((group) => {
+                    const isPending = group.status === "pending";
+                    const isApproved = group.status === "approved";
+                    const isRejected = group.status === "rejected";
+                    
+                    const cardTheme = isPending ? "border-yellow-300 bg-yellow-50" : 
+                                      isApproved ? "border-green-300 bg-green-50" : 
+                                      isRejected ? "border-red-300 bg-red-50" : "border-gray-200 bg-white";
+
+                    return (
                     <div
                       key={group.group_id}
-                      ref={(el) => {
-                        if (el) groupRefs.current[group.group_id] = el;
-                      }}
+                      ref={(el) => { if (el) groupRefs.current[group.group_id] = el; }}
                       onClick={() => setSelectedGroup(group)}
-                      className={`bg-white rounded-lg shadow-sm border border-gray-200 cursor-pointer transition-all hover:shadow-md ${
-                        selectedGroup?.group_id === group.group_id
-                          ? "ring-2 ring-[#4A89B0]"
-                          : ""
+                      className={`rounded-lg shadow-sm border-2 cursor-pointer transition-all hover:shadow-md ${cardTheme} ${
+                        selectedGroup?.group_id === group.group_id ? "ring-2 ring-offset-2 ring-[#4A89B0]" : ""
                       }`}
                     >
                       <div className="p-5">
                         <div className="flex items-start justify-between mb-3">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-semibold text-gray-900">
+                              <h3 className="font-bold text-gray-900 text-lg">
                                 {group.requested_by}
                               </h3>
-                              <span className="text-xs text-gray-500">
+                              <span className="text-sm text-gray-600">
                                 ({group.department})
                               </span>
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                              <Calendar className="w-3 h-3" />
-                              {new Date(group.created_at).toLocaleDateString()}
+                            <div className="flex items-center gap-3 mt-1">
+                              <span className="flex items-center gap-1 text-sm text-gray-500">
+                                <Calendar className="w-4 h-4" />
+                                {new Date(group.created_at).toLocaleDateString()}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${
+                                isPending ? "bg-yellow-200 text-yellow-800" :
+                                isApproved ? "bg-green-200 text-green-800" :
+                                "bg-red-200 text-red-800"
+                              }`}>
+                                {group.status || "Pending"}
+                              </span>
                             </div>
                           </div>
+
                           <div className="flex flex-col items-end gap-2">
-                            <span className="text-xs text-gray-500">
-                              {group.items.length} item
-                              {group.items.length > 1 ? "s" : ""}
+                            <span className="text-sm font-medium text-gray-600">
+                              {group.items.length} item{group.items.length > 1 ? "s" : ""}
                             </span>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setGroupToDelete(group);
-                                setShowDeleteModal(true);
-                              }}
-                              className="flex items-center gap-1 text-xs bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700 px-2 py-1 rounded-lg transition-colors border border-red-200"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              Delete
-                            </button>
+                            
+                            {isPending && (
+                              <div className="flex items-center gap-2 mt-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleApproveRequest(group);
+                                  }}
+                                  className="flex items-center gap-1 text-sm bg-green-100 text-green-700 hover:bg-green-200 px-3 py-1.5 rounded-lg transition-colors border border-green-300 font-semibold"
+                                >
+                                  <Check className="w-4 h-4" /> Approve
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRejectRequest(group);
+                                  }}
+                                  className="flex items-center gap-1 text-sm bg-red-100 text-red-600 hover:bg-red-200 px-3 py-1.5 rounded-lg transition-colors border border-red-300 font-semibold"
+                                >
+                                  <X className="w-4 h-4" /> Reject
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
 
-                        <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                        <div className="bg-white/60 rounded-lg p-3 space-y-2 mt-2">
                           <div className="text-sm font-medium text-gray-700">
                             Requested Items:
                           </div>
                           {group.items.map((item, idx) => {
                             const inventory = (item as any).inventory;
                             return (
-                              <div
-                                key={idx}
-                                className="flex items-center justify-between text-sm"
-                              >
-                                <span className="text-gray-700">
+                              <div key={idx} className="flex items-center justify-between text-sm py-1">
+                                <span className="text-gray-800 font-medium">
                                   {inventory?.description || "Unknown Item"}
                                 </span>
-                                <span className="bg-[#4A89B0] text-white px-2 py-0.5 rounded text-xs font-medium">
-                                  × {item.quantity_requested}{" "}
-                                  {inventory?.units?.name || ""}
+                                <span className="bg-[#4A89B0] text-white px-3 py-1 rounded text-xs font-bold shadow-sm">
+                                  × {item.quantity_requested} {inventory?.units?.name || ""}
                                 </span>
                               </div>
                             );
@@ -727,7 +745,7 @@ export function InboxPage() {
                         </div>
                       </div>
                     </div>
-                  ))
+                  )})
                 )}
               </div>
 
@@ -822,78 +840,6 @@ export function InboxPage() {
           </div>
         </div>
 
-        {/* Delete Confirmation Modal */}
-        {showDeleteModal && groupToDelete && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                <h3 className="text-xl font-bold text-gray-900">
-                  Delete Request
-                </h3>
-                <button
-                  onClick={() => {
-                    setShowDeleteModal(false);
-                    setGroupToDelete(null);
-                  }}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-4">
-                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                  <div>
-                    <div className="text-xs text-gray-500">Requested by</div>
-                    <div className="font-semibold text-gray-900">
-                      {groupToDelete.requested_by}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-500 mb-2">
-                      Items to restore:
-                    </div>
-                    {groupToDelete.items.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between text-sm py-1"
-                      >
-                        <span className="text-gray-700">
-                          {(item as any).inventory?.description ||
-                            "Unknown Item"}
-                        </span>
-                        <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
-                          +{item.quantity_requested}{" "}
-                          {(item as any).inventory?.units?.name || ""}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-6 border-t border-gray-200 flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowDeleteModal(false);
-                    setGroupToDelete(null);
-                  }}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleteLoading}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  {deleteLoading ? "Deleting..." : "Confirm Delete"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );

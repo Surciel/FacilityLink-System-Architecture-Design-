@@ -41,7 +41,8 @@ interface InventoryItem {
   unit_id: string;
   units?: { name: string };
   remaining_stock: number;
-  minimum_stock?: number;
+  critical_stock?: number;
+  stock_threshold?: number;
   unit_cost?: number;
 }
 
@@ -133,6 +134,7 @@ export function AnalyticsPage() {
     getLocalISODate(new Date()),
   );
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
 
   // Authentication and session check
   useEffect(() => {
@@ -412,7 +414,7 @@ export function AnalyticsPage() {
   const fetchSummaryStats = async () => {
     const { data } = await supabase
       .from("inventory")
-      .select("remaining_stock, minimum_stock");
+      .select("remaining_stock, critical_stock");
     const outOfStockCount = (data || []).filter(
       (item) => item.remaining_stock <= 0,
     ).length;
@@ -449,6 +451,56 @@ export function AnalyticsPage() {
         setRisMonthOption(uniqueMonths[0]);
       if (!uniqueMonths.includes(ssmiMonthOption))
         setSsmiMonthOption(uniqueMonths[0]);
+    }
+  };
+
+  const handleCaptureSnapshot = async () => {
+    setSnapshotLoading(true);
+    try {
+      // 1. Generate the period_label format the SSMI report expects 
+      const now = new Date();
+      const monthName = fullMonths[now.getMonth()];
+      const year = now.getFullYear();
+      const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
+      const periodLabel = `${monthName} 1 - ${monthName} ${lastDay}, ${year}`;
+
+      // 2. Fetch all current inventory
+      const { data: currentInventory, error: fetchError } = await supabase
+        .from("inventory")
+        .select("item_no, remaining_stock, description, unit_cost");
+
+      if (fetchError || !currentInventory) throw fetchError;
+
+      // 3. Prepare the payload for the inventory_history table
+      const snapshotData = currentInventory.map((item) => ({
+        item_no: item.item_no,
+        period_label: periodLabel,
+        stock_on_hand: item.remaining_stock,
+        item_description: item.description,
+        unit_cost: item.unit_cost || 0,
+        total_qty_issued: 0, 
+        week1: 0, week2: 0, week3: 0, week4: 0
+      }));
+
+      // 4. Upsert into the database
+      const { error: insertError } = await supabase
+        .from("inventory_history")
+        .upsert(snapshotData, { 
+          onConflict: 'item_no,period_label' // This must match the unique constraint exactly
+        });
+
+      if (insertError) {
+        console.error("Snapshot insert error:", insertError);
+        throw new Error("Failed to save to database. Check if item_no and period_label are a unique composite key.");
+      }
+
+      toast.success(`Opening balance for ${monthName} has been securely locked!`);
+      fetchAvailableMonths();
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "Failed to capture inventory snapshot.");
+    } finally {
+      setSnapshotLoading(false);
     }
   };
 
@@ -1922,57 +1974,75 @@ export function AnalyticsPage() {
 
               {/* SSMI Report */}
               <div className="bg-white/20 backdrop-blur-sm border border-white/30 rounded-xl p-6 flex flex-col h-full shadow-sm">
-                <div className="flex items-center gap-3 mb-6">
+                <div className="flex items-center gap-3 mb-4">
                   <div className="bg-white/20 p-2 rounded-lg">
                     <Package className="w-5 h-5 text-white" />
                   </div>
                   <div className="font-semibold text-xl text-white">
-                    SSMI Report Options
+                    SSMI & Monthly Snapshots
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-1.5">
-                      Facility Equipment
-                    </label>
-                    <select
-                      value={reportFacility}
-                      onChange={(e) =>
-                        setReportFacility(e.target.value as "JMS" | "GYM")
-                      }
-                      className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
-                    >
-                      <option value="JMS">JMS Equipments</option>
-                      <option value="GYM">GYM Equipments</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-white/80 mb-1.5">
-                      Month Target
-                    </label>
-                    <select
-                      value={ssmiMonthOption}
-                      onChange={(e) => setSsmiMonthOption(e.target.value)}
-                      className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
-                    >
-                      {availableMonths.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                {/* NEW: Snapshot Button Area */}
+                <div className="mb-6 p-4 bg-white/10 rounded-lg border border-white/20">
+                  <h3 className="text-sm font-semibold mb-1 text-white">1. Lock Opening Balance</h3>
+                  <p className="text-xs text-white/80 mb-3">
+                    Run this on the 1st of every month to freeze the starting stock for your reports.
+                  </p>
+                  <button
+                    onClick={handleCaptureSnapshot}
+                    disabled={snapshotLoading}
+                    className="w-full flex items-center justify-center gap-2 bg-[#F59E0B] text-white py-2 rounded font-bold hover:bg-[#D97706] transition-colors shadow-sm disabled:opacity-50"
+                  >
+                    {snapshotLoading ? "Locking Baseline..." : "Capture Monthly Snapshot"}
+                  </button>
                 </div>
 
-                <button
-                  onClick={generateSSMIPDF}
-                  disabled={generating !== null}
-                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
-                >
-                  <Download className="w-4 h-4" />
-                  {generating === "SSMI" ? "Generating..." : "Download PDF"}
-                </button>
+                <div className="pt-4 border-t border-white/20">
+                  <h3 className="text-sm font-semibold mb-3 text-white">2. Generate Report</h3>
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <label className="block text-xs font-medium text-white/80 mb-1.5">
+                        Facility Equipment
+                      </label>
+                      <select
+                        value={reportFacility}
+                        onChange={(e) =>
+                          setReportFacility(e.target.value as "JMS" | "GYM")
+                        }
+                        className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
+                      >
+                        <option value="JMS">JMS Equipments</option>
+                        <option value="GYM">GYM Equipments</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-white/80 mb-1.5">
+                        Month Target
+                      </label>
+                      <select
+                        value={ssmiMonthOption}
+                        onChange={(e) => setSsmiMonthOption(e.target.value)}
+                        className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm focus:ring-2 focus:ring-white/50 outline-none"
+                      >
+                        {availableMonths.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={generateSSMIPDF}
+                    disabled={generating !== null}
+                    className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50"
+                  >
+                    <Download className="w-4 h-4" />
+                    {generating === "SSMI" ? "Generating..." : "Download PDF"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

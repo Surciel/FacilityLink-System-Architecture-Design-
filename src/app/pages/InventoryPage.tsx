@@ -32,15 +32,17 @@ interface InventoryItem {
   unit_id: string; // UUID foreign key
   units?: Unit; // Nested unit object from JOIN
   remaining_stock: number;
-  minimum_stock?: number;
+  critical_stock?: number; // Emergency floor - items must not go below this
+  stock_threshold?: number; // Early warning trigger - alert when stock falls below this
 }
 
 type EditableInventoryItem = Omit<
   InventoryItem,
-  "remaining_stock" | "minimum_stock"
+  "remaining_stock" | "critical_stock" | "stock_threshold"
 > & {
   remaining_stock: number | "";
-  minimum_stock: number | "" | undefined;
+  critical_stock: number | "" | undefined;
+  stock_threshold: number | "" | undefined;
 };
 
 type NewItemForm = {
@@ -48,7 +50,8 @@ type NewItemForm = {
   description: string;
   unit_id: string; // UUID
   remaining_stock: number | "";
-  minimum_stock: number | "";
+  critical_stock: number | "";
+  stock_threshold: number | "";
 };
 
 export function InventoryPage() {
@@ -112,7 +115,8 @@ export function InventoryPage() {
     description: "",
     unit_id: "",
     remaining_stock: "",
-    minimum_stock: "",
+    critical_stock: "",
+    stock_threshold: "",
   });
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
     null,
@@ -217,7 +221,7 @@ export function InventoryPage() {
     const { data, error } = await supabase
       .from("inventory")
       .select(
-        "item_no, description, unit_id, remaining_stock, minimum_stock, units!inner(pkid, name)",
+        "item_no, description, unit_id, remaining_stock, critical_stock, stock_threshold, units!inner(pkid, name)",
       )
       .order("description", { ascending: true });
 
@@ -357,7 +361,8 @@ export function InventoryPage() {
       unit_id: newItem.unit_id,
       remaining_stock:
         newItem.remaining_stock === "" ? 0 : newItem.remaining_stock,
-      minimum_stock: newItem.minimum_stock === "" ? 0 : newItem.minimum_stock,
+      critical_stock: newItem.critical_stock === "" ? 0 : newItem.critical_stock,
+      stock_threshold: newItem.stock_threshold === "" ? 0 : newItem.stock_threshold,
     });
 
     if (error) {
@@ -374,7 +379,8 @@ export function InventoryPage() {
         description: "",
         unit_id: "",
         remaining_stock: "",
-        minimum_stock: "",
+        critical_stock: "",
+        stock_threshold: "",
       });
       setItemIdPrefix("JMS");
       setItemIdNumber("");
@@ -422,10 +428,14 @@ export function InventoryPage() {
           description: editingItem.description,
           unit_id: editingItem.unit_id,
           remaining_stock: newStock,
-          minimum_stock:
-            typeof editingItem.minimum_stock === "string"
-              ? parseInt(editingItem.minimum_stock as string) || 0
-              : editingItem.minimum_stock,
+          critical_stock:
+            typeof editingItem.critical_stock === "string"
+              ? parseInt(editingItem.critical_stock as string) || 0
+              : editingItem.critical_stock,
+          stock_threshold:
+            typeof editingItem.stock_threshold === "string"
+              ? parseInt(editingItem.stock_threshold as string) || 0
+              : editingItem.stock_threshold,
         });
 
         if (insertError) {
@@ -516,10 +526,14 @@ export function InventoryPage() {
           description: editingItem.description,
           unit_id: editingItem.unit_id,
           remaining_stock: newRemainingStock,
-          minimum_stock:
-            typeof editingItem.minimum_stock === "string"
-              ? parseInt(editingItem.minimum_stock as string) || 0
-              : editingItem.minimum_stock,
+          critical_stock:
+            typeof editingItem.critical_stock === "string"
+              ? parseInt(editingItem.critical_stock as string) || 0
+              : editingItem.critical_stock,
+          stock_threshold:
+            typeof editingItem.stock_threshold === "string"
+              ? parseInt(editingItem.stock_threshold as string) || 0
+              : editingItem.stock_threshold,
         })
         .eq("item_no", oldItemNo);
 
@@ -733,7 +747,8 @@ export function InventoryPage() {
         description: "",
         unit_id: "",
         remaining_stock: "",
-        minimum_stock: "",
+        critical_stock: "",
+        stock_threshold: "",
       });
       setItemIdPrefix("JMS");
       setItemIdNumber("");
@@ -787,33 +802,49 @@ export function InventoryPage() {
     }
   };
 
-  const getStockStatus = (item: InventoryItem) => {
-    if (!item.minimum_stock)
-      return {
-        label: "Unknown",
-        color: "text-gray-600 bg-gray-50",
-        icon: Package,
-      };
-    const percentage = (item.remaining_stock / item.minimum_stock) * 100;
-    if (percentage < 30)
-      return {
-        label: "Critical",
-        color: "text-red-600 bg-red-50",
-        icon: AlertTriangle,
-      };
-    if (percentage < 60)
-      return {
-        label: "Low",
-        color: "text-orange-600 bg-orange-50",
-        icon: TrendingDown,
-      };
+const getStockStatus = (item: InventoryItem) => {
+  if (item.critical_stock === undefined || item.critical_stock === null) {
     return {
-      label: "Adequate",
-      color: "text-green-600 bg-green-50",
-      icon: TrendingUp,
+      label: "Unknown",
+      color: "text-gray-600 bg-gray-50",
+      icon: Package,
     };
-  };
+  }
 
+  const currentStock = item.remaining_stock;
+  const critical = item.critical_stock || 0;
+  const threshold = item.stock_threshold || 0;
+
+  if (currentStock <= critical) {
+    return {
+      label: "Critical",
+      color: "text-red-600 bg-red-50",
+      icon: AlertTriangle,
+    };
+  }
+
+  if (currentStock <= threshold) {
+    return {
+      label: "Low",
+      color: "text-orange-600 bg-orange-50",
+      icon: TrendingDown,
+    };
+  }
+
+  if (currentStock <= threshold * 1.5) {
+    return {
+      label: "Stable",
+      color: "text-blue-600 bg-blue-50",
+      icon: Package,
+    };
+  }
+
+  return {
+    label: "Adequate",
+    color: "text-green-600 bg-green-50",
+    icon: TrendingUp,
+  };
+};
   // Extract item prefix for category filtering
   const getItemPrefix = (itemNo: string): string => {
     if (itemNo.startsWith("GYM-S")) return "GYM";
@@ -844,7 +875,7 @@ export function InventoryPage() {
     0,
   );
   const lowStockCount = inventory.filter(
-    (item) => item.minimum_stock && item.remaining_stock < item.minimum_stock,
+    (item) => item.critical_stock && item.remaining_stock < item.critical_stock,
   ).length;
 
   const menuItems = [
@@ -1144,11 +1175,15 @@ export function InventoryPage() {
                       </tr>
                     ) : (
                       getSortedInventory(filteredInventory).map((item) => {
-                        const percentage = item.minimum_stock
-                          ? (item.remaining_stock / item.minimum_stock) * 100
-                          : 100;
-                        const status = getStockStatus(item);
-                        const StatusIcon = status.icon;
+                      const criticalLimit = item.critical_stock || 0;
+                      const warningLimit = item.stock_threshold || criticalLimit * 2;
+                      const percentage = warningLimit > 0 ? (item.remaining_stock / warningLimit) * 100 : 100;
+
+                      const status = getStockStatus(item);
+                      const isCritical = item.remaining_stock <= criticalLimit;
+                      const isLow = item.remaining_stock <= warningLimit && !isCritical;
+                      const barColor = isCritical ? "bg-red-600" : isLow ? "bg-orange-500" : "bg-green-500";
+                      const StatusIcon = status.icon;
                         return (
                           <tr key={item.item_no} className="hover:bg-gray-50">
                             <td className="px-6 py-4">
@@ -1169,22 +1204,22 @@ export function InventoryPage() {
                                 {item.remaining_stock}{" "}
                                 {item.units?.name || "unit"}
                               </div>
-                              {item.minimum_stock && (
-                                <>
-                                  <div className="text-xs text-gray-500">
-                                    Min: {item.minimum_stock}
-                                  </div>
-                                  <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-                                    <div
-                                      className={`h-1.5 rounded-full ${percentage < 30 ? "bg-red-600" : percentage < 60 ? "bg-orange-500" : "bg-green-500"}`}
-                                      style={{
-                                        width: `${Math.min(percentage, 100)}%`,
-                                      }}
-                                    />
-                                  </div>
-                                </>
-                              )}
-                            </td>
+{item.critical_stock !== undefined && item.critical_stock !== null && (
+  <>
+    <div className="text-xs text-gray-500 flex gap-2 mt-1">
+      <span>Critical: {item.critical_stock}</span>
+      {item.stock_threshold ? <span>Warning: {item.stock_threshold}</span> : null}
+    </div>
+    <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+      <div
+        className={`h-1.5 rounded-full ${barColor}`}
+        style={{
+          width: `${Math.min(percentage, 100)}%`,
+        }}
+      />
+    </div>
+  </>
+)}                            </td>
                             <td className="px-6 py-4">
                               <span
                                 className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${status.color}`}
@@ -1556,10 +1591,15 @@ export function InventoryPage() {
                                   value === "" ||
                                   (/^\d+$/.test(value) && parseInt(value) >= 0)
                                 ) {
+                                  const initialStock = value === "" ? 0 : parseInt(value);
+                                  const critical = Math.ceil(initialStock * 0.1);
+                                  const threshold = Math.ceil(initialStock * 0.3);
+
                                   setNewItem({
                                     ...newItem,
-                                    remaining_stock:
-                                      value === "" ? "" : parseInt(value),
+                                    remaining_stock: value === "" ? "" : initialStock,
+                                    critical_stock: critical,
+                                    stock_threshold: threshold,
                                   });
                                 }
                               }}
@@ -1571,30 +1611,36 @@ export function InventoryPage() {
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">
                               <span className="flex items-center gap-2">
-                                Minimum Stock Level
-                                <span title="Alert threshold for low stock warnings">
+                                Critical Stock (Emergency Floor) *
+                                <span title="Absolute minimum - items must never go below this level">
                                   <Info className="w-4 h-4 text-gray-400" />
                                 </span>
                               </span>
                             </label>
                             <input
                               type="text"
-                              value={newItem.minimum_stock}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                if (
-                                  value === "" ||
-                                  (/^\d+$/.test(value) && parseInt(value) >= 0)
-                                ) {
-                                  setNewItem({
-                                    ...newItem,
-                                    minimum_stock:
-                                      value === "" ? "" : parseInt(value),
-                                  });
-                                }
-                              }}
+                              value={newItem.critical_stock}
+                              readOnly
                               placeholder="0"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                              className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-100 cursor-not-allowed text-gray-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              <span className="flex items-center gap-2">
+                                Stock Threshold (Early Warning) *
+                                <span title="Alert threshold - triggers early warning notifications">
+                                  <Info className="w-4 h-4 text-gray-400" />
+                                </span>
+                              </span>
+                            </label>
+                            <input
+                              type="text"
+                              value={newItem.stock_threshold}
+                              readOnly
+                              placeholder="0"
+                              className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-100 cursor-not-allowed text-gray-500"
                             />
                           </div>
                         </div>
@@ -1814,60 +1860,66 @@ export function InventoryPage() {
                                               ))}
                                           </select>
                                         </div>
-                                        <div>
+                                          <div>
+                                            <label className="block text-xs font-medium text-gray-700 mb-1">
+                                              Current Stock
+                                            </label>
+                                            <input
+                                              type="text"
+                                              value={editingItem.remaining_stock}
+                                              onChange={(e) => {
+                                                const value = e.target.value;
+                                                if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
+                                                  const newStock = value === "" ? "" : parseInt(value);
+                                                  
+                                                  // Auto-calculate thresholds based on the adjusted stock
+                                                  const critical = newStock === "" ? "" : Math.ceil(newStock * 0.10);
+                                                  const threshold = newStock === "" ? "" : Math.ceil(newStock * 0.30);
+
+                                                  setEditingItem({
+                                                    ...editingItem,
+                                                    remaining_stock: newStock,
+                                                    critical_stock: critical,
+                                                    stock_threshold: threshold,
+                                                  });
+                                                }
+                                              }}
+                                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
+                                            />
+                                          </div>                                        
+                                          <div>
                                           <label className="block text-xs font-medium text-gray-700 mb-1">
-                                            Current Stock
+                                            <span className="flex items-center gap-1">
+                                              Critical Stock
+                                              <span title="Automatically calculated as 10% of current stock">
+                                                <Info className="w-3 h-3 text-gray-400" />
+                                              </span>
+                                            </span>
                                           </label>
                                           <input
                                             type="text"
-                                            value={editingItem.remaining_stock}
-                                            onChange={(e) => {
-                                              const value = e.target.value;
-                                              if (
-                                                value === "" ||
-                                                (/^\d+$/.test(value) &&
-                                                  parseInt(value) >= 0)
-                                              ) {
-                                                setEditingItem({
-                                                  ...editingItem,
-                                                  remaining_stock:
-                                                    value === ""
-                                                      ? ""
-                                                      : parseInt(value),
-                                                });
-                                              }
-                                            }}
-                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
+                                            value={editingItem.critical_stock ?? ""}
+                                            readOnly
+                                            placeholder="0"
+                                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed focus:outline-none"
                                           />
-                                        </div>
-                                        <div>
-                                          <label className="block text-xs font-medium text-gray-700 mb-1">
-                                            Minimum Stock
-                                          </label>
-                                          <input
-                                            type="text"
-                                            value={
-                                              editingItem.minimum_stock ?? ""
-                                            }
-                                            onChange={(e) => {
-                                              const value = e.target.value;
-                                              if (
-                                                value === "" ||
-                                                (/^\d+$/.test(value) &&
-                                                  parseInt(value) >= 0)
-                                              ) {
-                                                setEditingItem({
-                                                  ...editingItem,
-                                                  minimum_stock:
-                                                    value === ""
-                                                      ? ""
-                                                      : parseInt(value),
-                                                });
-                                              }
-                                            }}
-                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
-                                          />
-                                        </div>
+                                        </div>                                        <div>
+                                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                                          <span className="flex items-center gap-1">
+                                            Stock Threshold
+                                            <span title="Automatically calculated as 30% of current stock">
+                                              <Info className="w-3 h-3 text-gray-400" />
+                                            </span>
+                                          </span>
+                                        </label>
+                                        <input
+                                          type="text"
+                                          value={editingItem.stock_threshold ?? ""}
+                                          readOnly
+                                          placeholder="0"
+                                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed focus:outline-none"
+                                        />
+                                        </div>                                      
                                       </div>
                                       <div className="flex gap-2">
                                         <button
@@ -1919,10 +1971,14 @@ export function InventoryPage() {
                                                 item.remaining_stock === 0
                                                   ? ""
                                                   : item.remaining_stock,
-                                              minimum_stock:
-                                                item.minimum_stock === 0
+                                              critical_stock:
+                                                item.critical_stock === 0
                                                   ? ""
-                                                  : item.minimum_stock,
+                                                  : item.critical_stock,
+                                              stock_threshold:
+                                                item.stock_threshold === 0
+                                                  ? ""
+                                                  : item.stock_threshold,
                                             } as EditableInventoryItem);
                                           }}
                                           className="px-3 py-1 bg-[#4A89B0] text-white text-sm rounded-lg hover:bg-[#3776A0] flex items-center gap-1"
@@ -1942,10 +1998,10 @@ export function InventoryPage() {
                                         </div>
                                         <div>
                                           <p className="text-xs text-gray-500">
-                                            Minimum Stock
+                                            Critical Stock
                                           </p>
                                           <p className="text-sm font-semibold">
-                                            {item.minimum_stock ?? "—"}{" "}
+                                            {item.critical_stock ?? "—"}{" "}
                                             {item.units?.name}
                                           </p>
                                         </div>

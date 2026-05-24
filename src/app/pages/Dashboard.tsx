@@ -93,11 +93,7 @@ export function Dashboard() {
           fetchDashboardDataRealtime();
         },
       )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          console.log("Dashboard real-time subscription active");
-        }
-      });
+      .subscribe();
 
     subscriptionRef.current = subscription;
 
@@ -168,12 +164,9 @@ export function Dashboard() {
       return;
     }
 
-    console.log("Requests fetched:", data?.length || 0);
-
     // Fetch inventory data for each request
     if (data && data.length > 0) {
       const itemNos = [...new Set(data.map((req) => req.item_no))];
-      console.log("Fetching inventory for items:", itemNos);
 
       const { data: inventoryData, error: invError } = await supabase
         .from("inventory")
@@ -209,26 +202,35 @@ export function Dashboard() {
     }
   };
 
-  const fetchLowStockItems = async () => {
+const fetchLowStockItems = async () => {
     const { data, error } = await supabase
       .from("inventory")
       .select(
-        "item_no, description, unit_id, remaining_stock, minimum_stock, units(name)",
+        "item_no, description, unit_id, remaining_stock, critical_stock, stock_threshold, units(name)",
       )
       .order("remaining_stock", { ascending: true })
       .limit(100);
 
     if (error) return console.error(error);
-    // Filter items where remaining_stock < minimum_stock
+    
+    // Filter items that have dropped to or below the early warning threshold
     const lowStock = (data || []).filter(
       (item) =>
-        item.minimum_stock != null && item.remaining_stock < item.minimum_stock,
+        item.stock_threshold != null && item.remaining_stock <= item.stock_threshold,
     );
-    setLowStockItems(lowStock);
+    
+    // Sort them so the most critical items float to the top of the list
+    const sortedLowStock = lowStock.sort((a, b) => {
+      const aPercent = (a.stock_threshold && a.stock_threshold > 0) ? a.remaining_stock / a.stock_threshold : 1;
+      const bPercent = (b.stock_threshold && b.stock_threshold > 0) ? b.remaining_stock / b.stock_threshold : 1;
+      return aPercent - bPercent;
+    });
+
+    setLowStockItems(sortedLowStock);
   };
 
-  const fetchTotalItems = async () => {
-    const { count, error } = await supabase
+     const fetchTotalItems = async () => {
+      const { count, error } = await supabase
       .from("inventory")
       .select("*", { count: "exact", head: true });
 
@@ -578,11 +580,17 @@ export function Dashboard() {
                     </div>
                   ) : (
                     lowStockItems.map((item, index) => {
-                      const minimum = item.minimum_stock || 10;
-                      const percentage = Math.min(
-                        (item.remaining_stock / minimum) * 100,
-                        100,
-                      );
+                      const criticalLimit = item.critical_stock || 0;
+                      const warningLimit = item.stock_threshold || criticalLimit * 2 || 10;
+
+                      // Calculate percentage relative to the warning limit for a better visual scale
+                      const percentage = Math.min((item.remaining_stock / warningLimit) * 100, 100);
+
+                      // Determine status colors based on the new thresholds
+                      const isCritical = item.remaining_stock <= criticalLimit;
+                      const isLow = item.remaining_stock <= warningLimit && !isCritical;
+
+                      const barColor = isCritical ? "bg-red-600" : isLow ? "bg-orange-500" : "bg-green-500";
                       return (
                         <div
                           key={index}
@@ -608,14 +616,8 @@ export function Dashboard() {
                             </div>
                             <div className="w-full bg-gray-200 rounded-full h-2">
                               <div
-                                className={`h-2 rounded-full ${
-                                  percentage < 30
-                                    ? "bg-red-600"
-                                    : percentage < 60
-                                      ? "bg-orange-500"
-                                      : "bg-green-500"
-                                }`}
-                                style={{ width: `${percentage}%` }}
+                              className={`h-2 rounded-full ${barColor}`}
+                              style={{ width: `${percentage}%` }}
                               />
                             </div>
                           </div>

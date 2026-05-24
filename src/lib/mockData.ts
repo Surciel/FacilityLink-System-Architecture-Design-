@@ -8,7 +8,7 @@ export interface InventoryItem {
   subcategory?: string;
   unit_of_measurement: string;
   current_stock: number;
-  minimum_stock_level: number;
+  stock_threshold: number;
   maximum_stock_level?: number;
   price_per_unit?: number;
   location?: string;
@@ -81,7 +81,7 @@ let mockInventory: InventoryItem[] = [
     subcategory: 'Computers',
     unit_of_measurement: 'units',
     current_stock: 45,
-    minimum_stock_level: 20,
+    stock_threshold: 20,
     maximum_stock_level: 100,
     price_per_unit: 1299.99,
     location: 'Storage Room A, Shelf 3',
@@ -97,7 +97,7 @@ let mockInventory: InventoryItem[] = [
     subcategory: 'Writing Instruments',
     unit_of_measurement: 'boxes',
     current_stock: 8,
-    minimum_stock_level: 15,
+    stock_threshold: 15,
     maximum_stock_level: 50,
     price_per_unit: 12.99,
     location: 'Supply Closet B, Bin 12',
@@ -113,7 +113,7 @@ let mockInventory: InventoryItem[] = [
     subcategory: 'AV Equipment',
     unit_of_measurement: 'units',
     current_stock: 5,
-    minimum_stock_level: 10,
+    stock_threshold: 10,
     maximum_stock_level: 25,
     price_per_unit: 899.00,
     location: 'AV Equipment Room',
@@ -129,7 +129,7 @@ let mockInventory: InventoryItem[] = [
     subcategory: 'Paper Products',
     unit_of_measurement: 'reams',
     current_stock: 120,
-    minimum_stock_level: 50,
+    stock_threshold: 50,
     maximum_stock_level: 200,
     price_per_unit: 4.99,
     location: 'Storage Room B, Pallet 5',
@@ -145,7 +145,7 @@ let mockInventory: InventoryItem[] = [
     subcategory: 'Glassware',
     unit_of_measurement: 'units',
     current_stock: 3,
-    minimum_stock_level: 20,
+    stock_threshold: 20,
     maximum_stock_level: 50,
     price_per_unit: 8.50,
     location: 'Lab Storage, Cabinet C3',
@@ -375,7 +375,7 @@ export const inventoryAPI = {
 
   async getLowStock() {
     await delay(300);
-    return mockInventory.filter(item => item.current_stock < item.minimum_stock_level);
+    return mockInventory.filter(item => item.current_stock < item.stock_threshold);
   },
 
   async search(query: string) {
@@ -401,7 +401,7 @@ export const inventoryAPI = {
       category: item.category || '',
       unit_of_measurement: item.unit_of_measurement || 'units',
       current_stock: item.current_stock || 0,
-      minimum_stock_level: item.minimum_stock_level || 0,
+      stock_threshold: item.stock_threshold || 0,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       ...item,

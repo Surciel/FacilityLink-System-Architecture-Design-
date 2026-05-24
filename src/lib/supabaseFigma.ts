@@ -18,7 +18,7 @@ export interface InventoryItem {
   subcategory?: string;
   unit_of_measurement: string;
   current_stock: number;
-  minimum_stock_level: number;
+  stock_threshold: number;
   maximum_stock_level?: number;
   price_per_unit?: number;
   location?: string;
@@ -141,7 +141,7 @@ export const inventoryAPI = {
     const { data, error } = await supabase
       .from('inventory')
       .select('*')
-      .lt('current_stock', supabase.raw('minimum_stock_level'))
+      .lt('current_stock', supabase.raw('stock_threshold'))
       .order('current_stock');
     
     if (error) throw error;

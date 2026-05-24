@@ -492,111 +492,70 @@ export function UserRequestPage() {
     setSubmitting(true);
 
     try {
-      const department =
-        personalInfo.userType === "faculty"
-          ? personalInfo.department
-          : personalInfo.college;
+      const department = personalInfo.userType === "faculty" ? personalInfo.department : personalInfo.college;
+      const facilityPrefix = personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
 
-      const facilityPrefix =
-        personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+      // 1. MEMORY OPTIMIZATION: Fetch all required inventory items in a SINGLE query.
+      const itemIds = items.map(item => item.id);
+      const { data: inventoryItems, error: fetchError } = await supabase
+        .from("inventory")
+        .select("item_no, description, unit_id, units(name), remaining_stock")
+        .in("item_no", itemIds)
+        .ilike("item_no", `${facilityPrefix}%`);
 
-      // Step 1: Validate all items exist and have sufficient stock
+      if (fetchError || !inventoryItems) {
+        toast.error("Error verifying items with the database.");
+        setSubmitting(false);
+        return;
+      }
+
+      // 2. Validate items locally using the fetched array
       const validatedItems = [];
       for (const item of items) {
-        const { data: inventoryItem, error: fetchError } = await supabase
-          .from("inventory")
-          .select("item_no, description, unit_id, units(name), remaining_stock")
-          .eq("item_no", item.id)
-          .ilike("item_no", `${facilityPrefix}%`)
-          .single();
-
-        if (fetchError || !inventoryItem) {
-          toast.error(
-            `Item ID "${item.id}" not found or not available for your account type.`,
-          );
-          setSubmitting(false);
-          return;
+        const invItem = inventoryItems.find(i => i.item_no === item.id);
+        
+        if (!invItem) {
+          toast.error(`Item ID "${item.id}" not found or not available.`);
+          setSubmitting(false); return;
         }
-
-        if (item.quantity > inventoryItem.remaining_stock) {
-          toast.error(
-            `Not enough stock for "${inventoryItem.description}". Only ${inventoryItem.remaining_stock} ${(inventoryItem.units as any)?.name}(s) available.`,
-          );
-          setSubmitting(false);
-          return;
-        }
-
         validatedItems.push({
           ...item,
-          inventoryDescription: inventoryItem.description,
-          inventoryUnit: (inventoryItem.units as any)?.name || "",
-          currentStock: inventoryItem.remaining_stock,
+          inventoryDescription: invItem.description,
         });
       }
 
-      // Step 2: Generate a request group ID to link all items from this submission
       const requestGroupId = crypto.randomUUID();
+      const phTime = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }));
 
-      // Get current time in Philippine Time (UTC+8)
-      const phTime = new Date(
-        new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }),
-      );
-
-      // Step 3: Insert each item as a separate row in requests table
+      // 3. Insert into requests table WITH 'pending' status
       const requestsToInsert = validatedItems.map((item) => ({
         item_no: item.id,
         quantity_requested: item.quantity,
         requested_by: personalInfo.fullName,
         requester_type: personalInfo.userType,
-        requester_info:
-          personalInfo.userType === "student"
-            ? personalInfo.studentNumber
-            : personalInfo.facultyId,
+        requester_info: personalInfo.userType === "student" ? personalInfo.studentNumber : personalInfo.facultyId,
         department: department,
         request_group_id: requestGroupId,
         created_at: phTime.toISOString(),
+        status: "pending" 
       }));
 
-      const { error: requestsInsertError } = await supabase
-        .from("requests")
-        .insert(requestsToInsert);
+      const { error: requestsInsertError } = await supabase.from("requests").insert(requestsToInsert);
 
       if (requestsInsertError) {
-        toast.error("Failed to submit request. Please try again.");
-        console.error(requestsInsertError);
-        setSubmitting(false);
-        return;
+        toast.error("Failed to submit request.");
+        setSubmitting(false); return;
       }
 
-      // Step 4: Update inventory stock for all items
-      for (const item of validatedItems) {
-        const { error: stockError } = await supabase
-          .from("inventory")
-          .update({
-            remaining_stock: item.currentStock - item.quantity,
-          })
-          .eq("item_no", item.id);
-
-        if (stockError) {
-          toast.error(
-            `Failed to update stock for: ${item.inventoryDescription}`,
-          );
-          console.error(stockError);
-          setSubmitting(false);
-          return;
-        }
-      }
-
-      toast.success("Request submitted successfully!");
+      toast.success("Request submitted and is pending review!");
       setCurrentStep(3);
     } catch (error) {
       toast.error("Something went wrong. Please try again.");
-      console.error(error);
     } finally {
       setSubmitting(false);
     }
   };
-
+  
   const handleNextStep = () => {
     if (currentStep === 1 && validateStep1()) {
       setCurrentStep(2);
