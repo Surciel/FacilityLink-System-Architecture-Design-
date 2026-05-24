@@ -70,6 +70,7 @@ const monthNameToIndex: { [key: string]: number } = {
 
 export function AnalyticsPage() {
   const navigate = useNavigate();
+  const [showSnapshotModal, setShowSnapshotModal] = useState(false);
   const [reportType, setReportType] = useState<string>("weekly");
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -1999,7 +2000,7 @@ export function AnalyticsPage() {
                     Run this on the 1st of every month to freeze the starting stock for your reports.
                   </p>
                   <button
-                    onClick={handleCaptureSnapshot}
+                    onClick={() => setShowSnapshotModal(true)}
                     disabled={snapshotLoading}
                     className="w-full flex items-center justify-center gap-2 bg-[#F59E0B] text-white py-2 rounded font-bold hover:bg-[#D97706] transition-colors shadow-sm disabled:opacity-50"
                   >
@@ -2056,6 +2057,47 @@ export function AnalyticsPage() {
             </div>
           </div>
         </div>
+
+      {/* Snapshot Confirmation Modal */}
+      {showSnapshotModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6 border-b border-gray-200 flex items-center gap-3">
+              <div className="bg-yellow-100 p-2 rounded-full">
+                <AlertCircle className="w-6 h-6 text-yellow-600" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900">
+                Confirm Snapshot Overwrite
+              </h3>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-4">
+                You are about to capture your current live inventory as the starting baseline for this month's reports. 
+              </p>
+              <p className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
+                <strong>Warning:</strong> If you have already captured a snapshot this month, continuing will overwrite your opening balance and RESET all weekly issuance data for the current month back to zero.
+              </p>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex gap-3 justify-end bg-gray-50">
+              <button
+                onClick={() => setShowSnapshotModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-white transition-colors text-gray-700 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowSnapshotModal(false);
+                  handleCaptureSnapshot();
+                }}
+                className="px-4 py-2 bg-[#F59E0B] text-white rounded-lg hover:bg-[#D97706] transition-colors font-medium shadow-sm"
+              >
+                Confirm & Overwrite
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </main>
     </div>
   );
