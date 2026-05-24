@@ -4,6 +4,8 @@ import {
   Bar,
   LineChart,
   Line,
+  AreaChart,
+  Area,
   PieChart,
   Pie,
   Cell,
@@ -89,11 +91,31 @@ export function AnalyticsPage() {
   const [showCategoryDetailModal, setShowCategoryDetailModal] = useState(false);
 
   const [monthlyTrendData, setMonthlyTrendData] = useState<any[]>([]);
+  const [trendFilter, setTrendFilter] = useState<
+    "all" | "consumable" | "borrowable"
+  >("all");
   const [categoryDistribution, setCategoryDistribution] = useState<any[]>([]);
   const [topRequestedItems, setTopRequestedItems] = useState<any[]>([]);
   const [departmentActivity, setDepartmentActivity] = useState<any[]>([]);
   const [totalRequestsWeek, setTotalRequestsWeek] = useState(0);
   const [itemsNeedRestock, setItemsNeedRestock] = useState(0);
+
+  // Categorized Asset Analytics
+  const [consumableBurnRate, setConsumableBurnRate] = useState<any[]>([]);
+  const [borrowableUtilization, setBorrowableUtilization] = useState<any[]>([]);
+  const [lossDamageData, setLossDamageData] = useState<any[]>([]);
+
+  // Fast-Moving Items
+  const [velocityData, setVelocityData] = useState<any[]>([]);
+  const [velocityCategory, setVelocityCategory] = useState<
+    "all" | "consumable" | "borrowable"
+  >("all");
+  const [velocityPage, setVelocityPage] = useState(1);
+  const [velocityPageInput, setVelocityPageInput] = useState<string>("1");
+  const [velocityTotalPages, setVelocityTotalPages] = useState(1);
+  const [velocityLoading, setVelocityLoading] = useState(false);
+  const [isVelocityTableCollapsed, setIsVelocityTableCollapsed] =
+    useState(false);
 
   const [reportFacility, setReportFacility] = useState<"JMS" | "GYM">("JMS");
 
@@ -166,6 +188,16 @@ export function AnalyticsPage() {
     localStorage.setItem("sidebarPinned", JSON.stringify(isSidebarPinned));
   }, [isSidebarPinned]);
 
+  // Fetch velocity data when category or page changes
+  useEffect(() => {
+    fetchVelocityDataWithFilters(velocityCategory, velocityPage);
+  }, [velocityCategory, velocityPage]);
+
+  // Sync input value when velocityPage changes
+  useEffect(() => {
+    setVelocityPageInput(String(velocityPage));
+  }, [velocityPage]);
+
   const fetchAllData = async () => {
     setLoading(true);
     try {
@@ -176,6 +208,8 @@ export function AnalyticsPage() {
         fetchDepartmentActivity(),
         fetchSummaryStats(),
         fetchAvailableMonths(),
+        fetchCategorizedAssetAnalytics(),
+        fetchVelocityDataWithFilters("all", 1),
       ]);
     } catch (error) {
       toast.error("Failed to load analytics data");
@@ -229,63 +263,69 @@ export function AnalyticsPage() {
       "Dec",
     ];
 
-    const monthlyData: Record<string, number> = {};
+    // Fetch 13 months of data with item type information
+    const trendByMonth: Record<
+      string,
+      { consumables: number; borrowables: number; isCurrent: boolean }
+    > = {};
 
-    const { data: allHistoryData } = await supabase
-      .from("inventory_history")
-      .select("period_label, quantity_used");
-
-    const historyByPeriod: Record<string, number> = {};
-    (allHistoryData || []).forEach((row) => {
-      const label = row.period_label;
-      if (label) {
-        historyByPeriod[label] =
-          (historyByPeriod[label] || 0) + (row.quantity_used || 0);
-      }
-    });
-
-    for (let i = 0; i < 6; i++) {
+    // Calculate date range for last 13 months
+    for (let i = 0; i < 13; i++) {
       const date = new Date(currentYear, currentMonthIndex, 1);
       date.setMonth(date.getMonth() - i);
       const monthIndex = date.getMonth();
       const year = date.getFullYear();
 
-      if (year < currentYear) break;
-
       const monthName = fullMonths[monthIndex];
       const monthShort = shortMonths[monthIndex];
       const firstDay = new Date(year, monthIndex, 1);
       const lastDay = new Date(year, monthIndex + 1, 0);
-      const displayKey = `${monthName} 1 - ${monthName} ${lastDay.getDate()}, ${year}`;
+      const isCurrent = i === 0;
+      const displayKey = `${monthShort}${isCurrent ? " (Current)" : ""}`;
 
-      if (monthIndex === currentMonthIndex && year === currentYear) {
-        const { data } = await supabase
-          .from("requests")
-          .select("quantity_requested")
-          .gte("created_at", firstDay.toISOString())
-          .lte("created_at", lastDay.toISOString());
-        const total = (data || []).reduce(
-          (sum, row) => sum + (row.quantity_requested || 0),
-          0,
-        );
-        monthlyData[displayKey] = total;
-      } else {
-        // Try both full and abbreviated month name formats with "to" separator
-        const periodLabelFull = `${monthName} 1 to ${lastDay.getDate()}, ${year}`;
-        const periodLabelShort = `${monthShort} 1 to ${lastDay.getDate()}, ${year}`;
-        monthlyData[displayKey] =
-          historyByPeriod[periodLabelFull] ||
-          historyByPeriod[periodLabelShort] ||
-          0;
-      }
+      // Fetch requests with item type information for this month
+      const { data: monthRequests } = await supabase
+        .from("requests")
+        .select("item_no, quantity_requested, inventory(item_type)")
+        .gte("created_at", firstDay.toISOString())
+        .lte("created_at", lastDay.toISOString());
+
+      let consumableCount = 0;
+      let borrowableCount = 0;
+
+      (monthRequests || []).forEach((req) => {
+        const quantity = Number(req.quantity_requested) || 0;
+        const reqAny = req as any;
+        const itemType = Array.isArray(reqAny.inventory)
+          ? reqAny.inventory[0]?.item_type
+          : reqAny.inventory?.item_type;
+
+        if (itemType === "consumable") {
+          consumableCount += quantity;
+        } else if (itemType === "borrowable") {
+          borrowableCount += quantity;
+        } else {
+          // Count items with unknown type as consumables by default
+          consumableCount += quantity;
+        }
+      });
+
+      trendByMonth[displayKey] = {
+        consumables: consumableCount,
+        borrowables: borrowableCount,
+        isCurrent,
+      };
     }
 
-    const trendData = Object.entries(monthlyData)
+    // Convert to array format for chart, sorted chronologically
+    const trendData = Object.entries(trendByMonth)
       .reverse()
-      .map(([month]) => {
-        const [monthName] = month.split(" ");
-        return { month: monthName, items: monthlyData[month] };
-      });
+      .map(([month, data]) => ({
+        month,
+        consumables: data.consumables,
+        borrowables: data.borrowables,
+        isCurrent: data.isCurrent,
+      }));
 
     setMonthlyTrendData(trendData);
   };
@@ -455,10 +495,368 @@ export function AnalyticsPage() {
     }
   };
 
+  const fetchCategorizedAssetAnalytics = async () => {
+    try {
+      // Fetch inventory with item types
+      const { data: inventoryData } = await supabase
+        .from("inventory")
+        .select("item_no, description, remaining_stock, item_type");
+
+      // Fetch all requests for this month
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+      const { data: requestsData } = await supabase
+        .from("requests")
+        .select("item_no, quantity_requested, quantity_returned, created_at")
+        .gte("created_at", monthStart.toISOString())
+        .lte("created_at", monthEnd.toISOString());
+
+      // Calculate burn rate and utilization
+      const burnRateMap: Record<string, any> = {};
+      const utilizationMap: Record<string, any> = {};
+      const damageMap: Record<string, any> = {};
+
+      // Group requests by item
+      const requestsByItem: Record<string, any[]> = {};
+      (requestsData || []).forEach((req) => {
+        if (!requestsByItem[req.item_no]) {
+          requestsByItem[req.item_no] = [];
+        }
+        requestsByItem[req.item_no].push(req);
+      });
+
+      // Process each inventory item
+      (inventoryData || []).forEach((item) => {
+        const itemRequests = requestsByItem[item.item_no] || [];
+        const itemType = item.item_type || "consumable";
+
+        if (itemType === "consumable") {
+          // Calculate burn rate: units used per week
+          const totalUsed = itemRequests.reduce(
+            (sum, req) => sum + (Number(req.quantity_requested) || 0),
+            0,
+          );
+          const weeksInMonth = 4.33;
+          const weeklyBurnRate = (totalUsed / weeksInMonth).toFixed(2);
+
+          burnRateMap[item.item_no] = {
+            description: item.description,
+            monthlyUsage: totalUsed,
+            weeklyBurnRate: parseFloat(weeklyBurnRate),
+            currentStock: item.remaining_stock,
+            weeksUntilStockout:
+              item.remaining_stock > 0 && parseFloat(weeklyBurnRate) > 0
+                ? Math.ceil(item.remaining_stock / parseFloat(weeklyBurnRate))
+                : "∞",
+            recommendation:
+              parseFloat(weeklyBurnRate) > 0
+                ? `Reorder in ${Math.ceil(item.remaining_stock / parseFloat(weeklyBurnRate))} weeks`
+                : "Monitor usage",
+          };
+        } else {
+          // Calculate utilization rate for borrowables
+          const totalRequests = itemRequests.length;
+          const daysInMonth = new Date(
+            now.getFullYear(),
+            now.getMonth() + 1,
+            0,
+          ).getDate();
+          const utilizationPercentage =
+            daysInMonth > 0
+              ? ((totalRequests / daysInMonth) * 100).toFixed(1)
+              : "0";
+
+          // Check for unreturned items (loss/damage)
+          const unreturnedCount = itemRequests.filter(
+            (req) => !req.quantity_returned || req.quantity_returned === 0,
+          ).length;
+
+          utilizationMap[item.item_no] = {
+            description: item.description,
+            totalRequests,
+            utilizationPercentage: parseFloat(utilizationPercentage),
+            currentStock: item.remaining_stock,
+            recommendation:
+              parseFloat(utilizationPercentage) < 5
+                ? "Low utilization - consider not restocking"
+                : parseFloat(utilizationPercentage) > 20
+                  ? "High utilization - monitor availability"
+                  : "Healthy utilization rate",
+          };
+
+          if (unreturnedCount > 0) {
+            damageMap[item.item_no] = {
+              description: item.description,
+              totalRequests,
+              unreturnedCount,
+              returnRate: (
+                ((totalRequests - unreturnedCount) / totalRequests) * 100 || 0
+              ).toFixed(1),
+              lossPercentage: ((unreturnedCount / totalRequests) * 100).toFixed(
+                1,
+              ),
+              recommendation:
+                parseFloat(
+                  ((unreturnedCount / totalRequests) * 100).toFixed(1),
+                ) > 10
+                  ? "High loss rate - implement tracking system"
+                  : "Acceptable loss rate",
+            };
+          }
+        }
+      });
+
+      // Set state with top items for each category
+      setConsumableBurnRate(
+        Object.values(burnRateMap)
+          .sort((a, b) => b.weeklyBurnRate - a.weeklyBurnRate)
+          .slice(0, 5),
+      );
+
+      setBorrowableUtilization(
+        Object.values(utilizationMap)
+          .sort((a, b) => b.utilizationPercentage - a.utilizationPercentage)
+          .slice(0, 5),
+      );
+
+      setLossDamageData(
+        Object.values(damageMap)
+          .sort(
+            (a, b) =>
+              parseFloat(b.lossPercentage) - parseFloat(a.lossPercentage),
+          )
+          .slice(0, 5),
+      );
+    } catch (error) {
+      console.error("Error fetching categorized asset analytics:", error);
+    }
+  };
+
+  const fetchVelocityDataWithFilters = async (
+    category: "all" | "consumable" | "borrowable" = "all",
+    page: number = 1,
+  ) => {
+    try {
+      setVelocityLoading(true);
+      const now = new Date();
+      const currentMonthIndex = now.getMonth();
+      const currentYear = now.getFullYear();
+
+      // Calculate previous month
+      const prevDate = new Date(currentYear, currentMonthIndex - 1, 1);
+      const prevMonthIndex = prevDate.getMonth();
+      const prevYear = prevDate.getFullYear();
+
+      // Calculate two months ago
+      const twoMonthsAgoDate = new Date(currentYear, currentMonthIndex - 2, 1);
+      const twoMonthsAgoIndex = twoMonthsAgoDate.getMonth();
+      const twoMonthsAgoYear = twoMonthsAgoDate.getFullYear();
+
+      // Current month date range
+      const currentMonthStart = new Date(currentYear, currentMonthIndex, 1);
+      const currentMonthEnd = new Date(
+        currentYear,
+        currentMonthIndex + 1,
+        0,
+        23,
+        59,
+        59,
+      );
+
+      // Previous month date range
+      const prevMonthStart = new Date(prevYear, prevMonthIndex, 1);
+      const prevMonthEnd = new Date(
+        prevYear,
+        prevMonthIndex + 1,
+        0,
+        23,
+        59,
+        59,
+      );
+
+      // Two months ago date range
+      const twoMonthsAgoStart = new Date(
+        twoMonthsAgoYear,
+        twoMonthsAgoIndex,
+        1,
+      );
+      const twoMonthsAgoEnd = new Date(
+        twoMonthsAgoYear,
+        twoMonthsAgoIndex + 1,
+        0,
+        23,
+        59,
+        59,
+      );
+
+      // Fetch requests for all three months with item_type information
+      const { data: currentMonthRequests } = await supabase
+        .from("requests")
+        .select(
+          "item_no, quantity_requested, inventory(description, item_type)",
+        )
+        .gte("created_at", currentMonthStart.toISOString())
+        .lte("created_at", currentMonthEnd.toISOString());
+
+      const { data: prevMonthRequests } = await supabase
+        .from("requests")
+        .select(
+          "item_no, quantity_requested, inventory(description, item_type)",
+        )
+        .gte("created_at", prevMonthStart.toISOString())
+        .lte("created_at", prevMonthEnd.toISOString());
+
+      const { data: twoMonthsAgoRequests } = await supabase
+        .from("requests")
+        .select(
+          "item_no, quantity_requested, inventory(description, item_type)",
+        )
+        .gte("created_at", twoMonthsAgoStart.toISOString())
+        .lte("created_at", twoMonthsAgoEnd.toISOString());
+
+      // Aggregate data by item with category filtering
+      const velocityMap: Record<
+        string,
+        {
+          name: string;
+          twoMonthsAgo: number;
+          oneMonthAgo: number;
+          currentMonth: number;
+          itemType: string;
+        }
+      > = {};
+
+      // Process two months ago data
+      (twoMonthsAgoRequests || []).forEach((req: any) => {
+        if (req.item_no) {
+          const itemType = Array.isArray(req.inventory)
+            ? req.inventory[0]?.item_type
+            : req.inventory?.item_type;
+
+          // Apply category filter
+          if (category !== "all" && itemType !== category) return;
+
+          const description = Array.isArray(req.inventory)
+            ? req.inventory[0]?.description
+            : req.inventory?.description;
+          const itemName = description || req.item_no;
+
+          if (!velocityMap[req.item_no]) {
+            velocityMap[req.item_no] = {
+              name: itemName,
+              twoMonthsAgo: 0,
+              oneMonthAgo: 0,
+              currentMonth: 0,
+              itemType: itemType || "unknown",
+            };
+          }
+          velocityMap[req.item_no].twoMonthsAgo +=
+            Number(req.quantity_requested) || 0;
+        }
+      });
+
+      // Process previous month (one month ago) data
+      (prevMonthRequests || []).forEach((req: any) => {
+        if (req.item_no) {
+          const itemType = Array.isArray(req.inventory)
+            ? req.inventory[0]?.item_type
+            : req.inventory?.item_type;
+
+          // Apply category filter
+          if (category !== "all" && itemType !== category) return;
+
+          const description = Array.isArray(req.inventory)
+            ? req.inventory[0]?.description
+            : req.inventory?.description;
+          const itemName = description || req.item_no;
+
+          if (!velocityMap[req.item_no]) {
+            velocityMap[req.item_no] = {
+              name: itemName,
+              twoMonthsAgo: 0,
+              oneMonthAgo: 0,
+              currentMonth: 0,
+              itemType: itemType || "unknown",
+            };
+          }
+          velocityMap[req.item_no].oneMonthAgo +=
+            Number(req.quantity_requested) || 0;
+        }
+      });
+
+      // Process current month data
+      (currentMonthRequests || []).forEach((req: any) => {
+        if (req.item_no) {
+          const itemType = Array.isArray(req.inventory)
+            ? req.inventory[0]?.item_type
+            : req.inventory?.item_type;
+
+          // Apply category filter
+          if (category !== "all" && itemType !== category) return;
+
+          const description = Array.isArray(req.inventory)
+            ? req.inventory[0]?.description
+            : req.inventory?.description;
+          const itemName = description || req.item_no;
+
+          if (!velocityMap[req.item_no]) {
+            velocityMap[req.item_no] = {
+              name: itemName,
+              twoMonthsAgo: 0,
+              oneMonthAgo: 0,
+              currentMonth: 0,
+              itemType: itemType || "unknown",
+            };
+          }
+          velocityMap[req.item_no].currentMonth +=
+            Number(req.quantity_requested) || 0;
+        }
+      });
+
+      // Sort by total velocity
+      const sortedVelocity = Object.values(velocityMap)
+        .filter(
+          (item) =>
+            item.twoMonthsAgo > 0 ||
+            item.oneMonthAgo > 0 ||
+            item.currentMonth > 0,
+        )
+        .sort(
+          (a, b) =>
+            b.twoMonthsAgo +
+            b.oneMonthAgo +
+            b.currentMonth -
+            (a.twoMonthsAgo + a.oneMonthAgo + a.currentMonth),
+        );
+
+      // Apply pagination (10 items per page)
+      const itemsPerPage = 10;
+      const startIndex = (page - 1) * itemsPerPage;
+      const paginatedVelocity = sortedVelocity
+        .slice(startIndex, startIndex + itemsPerPage)
+        .map((item, index) => ({
+          ...item,
+          index: index + 1,
+          displayName: `#${index + 1}`,
+        }));
+      const totalPages = Math.ceil(sortedVelocity.length / itemsPerPage);
+
+      setVelocityData(paginatedVelocity);
+      setVelocityTotalPages(totalPages);
+      setVelocityPage(page);
+    } catch (error) {
+      console.error("Error fetching velocity data:", error);
+    } finally {
+      setVelocityLoading(false);
+    }
+  };
+
   const handleCaptureSnapshot = async () => {
     setSnapshotLoading(true);
     try {
-      // 1. Generate the period_label format the SSMI report expects 
+      // 1. Generate the period_label format the SSMI report expects
       const now = new Date();
       const monthName = fullMonths[now.getMonth()];
       const year = now.getFullYear();
@@ -480,31 +878,35 @@ export function AnalyticsPage() {
         stock_on_hand: item.remaining_stock,
         balance_on_hand: item.remaining_stock, // Initially, balance equals starting stock
         unit_cost: item.unit_cost || 0,
-        total_cost: 0, 
+        total_cost: 0,
         // Flow metrics initialized to zero
         delivery: 0,
-        total_qty_issued: 0, 
-        week1: 0, 
-        week2: 0, 
-        week3: 0, 
+        total_qty_issued: 0,
+        week1: 0,
+        week2: 0,
+        week3: 0,
         week4: 0,
         // Make sure item_type is included if it's required by your schema
-        item_type: (item as any).item_type || 'consumable' 
+        item_type: (item as any).item_type || "consumable",
       }));
 
       // 4. Upsert into the database
       const { error: insertError } = await supabase
         .from("inventory_history")
-        .upsert(snapshotData, { 
-          onConflict: 'item_no,period_label' // This must match the unique constraint exactly
+        .upsert(snapshotData, {
+          onConflict: "item_no,period_label", // This must match the unique constraint exactly
         });
 
       if (insertError) {
         console.error("Snapshot insert error:", insertError);
-        throw new Error("Failed to save to database. Check if item_no and period_label are a unique composite key.");
+        throw new Error(
+          "Failed to save to database. Check if item_no and period_label are a unique composite key.",
+        );
       }
 
-      toast.success(`Opening balance for ${monthName} has been securely locked!`);
+      toast.success(
+        `Opening balance for ${monthName} has been securely locked!`,
+      );
       fetchAvailableMonths();
     } catch (error: any) {
       console.error(error);
@@ -1545,6 +1947,10 @@ export function AnalyticsPage() {
     navigate("/admin/login");
   };
 
+  // Calculate opacity values for trend chart lines
+  const consumableOpacity = trendFilter === "borrowable" ? 0.5 : 1;
+  const borrowableOpacity = trendFilter === "consumable" ? 0.5 : 1;
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow-sm fixed top-0 left-0 right-0 z-30">
@@ -1740,6 +2146,425 @@ export function AnalyticsPage() {
               )}
             </div>
 
+            {/* Categorized Asset Analytics */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <h3 className="text-xl font-bold text-gray-900">
+                Categorized Asset Analytics
+              </h3>
+              <p className="text-sm text-gray-600 mt-1 mb-6">
+                Consumables vs Borrowables/Returnables Analysis
+              </p>
+
+              {/* 3-Column Grid Layout */}
+              <div className="grid grid-cols-3 gap-6">
+                {/* Consumable Burn Rate Column */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-gray-900 text-base flex items-center gap-2 mb-4">
+                    <span className="w-3 h-3 rounded-full bg-blue-500"></span>
+                    Consumable Burn Rate
+                  </h4>
+                  {consumableBurnRate.length > 0 ? (
+                    <div className="space-y-3">
+                      {consumableBurnRate.map((item, index) => (
+                        <div
+                          key={index}
+                          className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <h5 className="font-semibold text-gray-900 text-xs">
+                                {item.description}
+                              </h5>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Monthly Usage:{" "}
+                                <span className="font-bold text-blue-600">
+                                  {item.monthlyUsage} units
+                                </span>
+                              </p>
+                            </div>
+                            <TrendingDown className="w-4 h-4 text-red-500 flex-shrink-0" />
+                          </div>
+                          <div className="grid grid-cols-3 gap-1 mt-2">
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">
+                                Weekly Rate
+                              </p>
+                              <p className="text-sm font-bold text-blue-600">
+                                {item.weeklyBurnRate}
+                              </p>
+                            </div>
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">
+                                Current Stock
+                              </p>
+                              <p className="text-sm font-bold text-gray-900">
+                                {item.currentStock}
+                              </p>
+                            </div>
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">
+                                Weeks Left
+                              </p>
+                              <p className="text-sm font-bold text-orange-600">
+                                {item.weeksUntilStockout}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="mt-2 p-1.5 bg-white rounded text-xs text-gray-700">
+                            <strong>Action:</strong> {item.recommendation}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-40 flex items-center justify-center text-gray-400">
+                      No consumable data available
+                    </div>
+                  )}
+                </div>
+
+                {/* Borrowable Utilization Column */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-gray-900 text-base flex items-center gap-2 mb-4">
+                    <span className="w-3 h-3 rounded-full bg-green-500"></span>
+                    Borrowable Utilization
+                  </h4>
+                  {borrowableUtilization.length > 0 ? (
+                    <div className="space-y-3">
+                      {borrowableUtilization.map((item, index) => (
+                        <div
+                          key={index}
+                          className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3 border border-green-200"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <h5 className="font-semibold text-gray-900 text-xs">
+                                {item.description}
+                              </h5>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Requests:{" "}
+                                <span className="font-bold text-green-600">
+                                  {item.totalRequests}
+                                </span>
+                              </p>
+                            </div>
+                            <Activity className="w-4 h-4 text-green-600 flex-shrink-0" />
+                          </div>
+                          <div className="grid grid-cols-3 gap-1 mt-2">
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">
+                                Utilization %
+                              </p>
+                              <p className="text-sm font-bold text-green-600">
+                                {item.utilizationPercentage}%
+                              </p>
+                            </div>
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">In Stock</p>
+                              <p className="text-sm font-bold text-gray-900">
+                                {item.currentStock}
+                              </p>
+                            </div>
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">Status</p>
+                              <p className="text-xs font-bold text-green-600">
+                                {item.utilizationPercentage < 5
+                                  ? "Low"
+                                  : item.utilizationPercentage > 20
+                                    ? "High"
+                                    : "Good"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="mt-2 p-1.5 bg-white rounded text-xs text-gray-700">
+                            <strong>Insight:</strong> {item.recommendation}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-40 flex items-center justify-center text-gray-400">
+                      No borrowable utilization data available
+                    </div>
+                  )}
+                </div>
+
+                {/* Loss & Damage Column */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-gray-900 text-base flex items-center gap-2 mb-4">
+                    <span className="w-3 h-3 rounded-full bg-red-500"></span>
+                    Loss & Damage Tracking
+                  </h4>
+                  {lossDamageData.length > 0 ? (
+                    <div className="space-y-3">
+                      {lossDamageData.map((item, index) => (
+                        <div
+                          key={index}
+                          className="bg-gradient-to-r from-red-50 to-red-100 rounded-lg p-3 border border-red-200"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <h5 className="font-semibold text-gray-900 text-xs">
+                                {item.description}
+                              </h5>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Total Requests:{" "}
+                                <span className="font-bold text-red-600">
+                                  {item.totalRequests}
+                                </span>
+                              </p>
+                            </div>
+                            <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                          </div>
+                          <div className="grid grid-cols-3 gap-1 mt-2">
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">
+                                Unreturned
+                              </p>
+                              <p className="text-sm font-bold text-red-600">
+                                {item.unreturnedCount}
+                              </p>
+                            </div>
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">
+                                Return Rate
+                              </p>
+                              <p className="text-sm font-bold text-gray-900">
+                                {item.returnRate}%
+                              </p>
+                            </div>
+                            <div className="bg-white rounded p-1.5">
+                              <p className="text-xs text-gray-600">Loss %</p>
+                              <p className="text-sm font-bold text-red-600">
+                                {item.lossPercentage}%
+                              </p>
+                            </div>
+                          </div>
+                          <div className="mt-2 p-1.5 bg-white rounded text-xs text-gray-700">
+                            <strong>Action:</strong> {item.recommendation}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="h-40 flex items-center justify-center text-gray-400">
+                      No loss/damage data available
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Fast-Moving Items Chart */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-xl font-bold text-gray-900">
+                    Fast-Moving Items{" "}
+                    {velocityCategory !== "all" &&
+                      `- ${velocityCategory.charAt(0).toUpperCase() + velocityCategory.slice(1)}s`}
+                  </h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Side-by-side velocity comparison (Last 2 Months)
+                  </p>
+                </div>
+                <select
+                  value={velocityCategory}
+                  onChange={(e) => {
+                    setVelocityCategory(
+                      e.target.value as "all" | "consumable" | "borrowable",
+                    );
+                    setVelocityPage(1);
+                  }}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All Items</option>
+                  <option value="consumable">Consumables</option>
+                  <option value="borrowable">Borrowables</option>
+                </select>
+              </div>
+              {velocityData.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={350}>
+                    <BarChart
+                      data={velocityData}
+                      margin={{ top: 5, right: 30, left: 20, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="displayName" />
+                      <YAxis />
+                      <Tooltip
+                        formatter={(value) => value}
+                        labelFormatter={(label) => {
+                          const item = velocityData.find(
+                            (d: any) => d.displayName === label,
+                          );
+                          return item ? `${item.name}` : label;
+                        }}
+                      />
+                      <Legend />
+                      <Bar
+                        dataKey="twoMonthsAgo"
+                        fill="#cbd5e1"
+                        name="2 Months Ago"
+                      />
+                      <Bar
+                        dataKey="oneMonthAgo"
+                        fill="#7dd3fc"
+                        name="1 Month Ago"
+                      />
+                      <Bar
+                        dataKey="currentMonth"
+                        fill="#0369a1"
+                        name="Current Month"
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+
+                  {/* Items Detail Table */}
+                  <div className="mt-6">
+                    {/* Pagination Controls */}
+                    <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <span>Page</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max={velocityTotalPages}
+                          value={velocityPageInput}
+                          onChange={(e) => {
+                            setVelocityPageInput(e.target.value);
+                          }}
+                          onBlur={() => {
+                            const newPage = Math.max(
+                              1,
+                              Math.min(
+                                velocityTotalPages,
+                                parseInt(velocityPageInput) || 1,
+                              ),
+                            );
+                            setVelocityPage(newPage);
+                          }}
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const newPage = Math.max(
+                                1,
+                                Math.min(
+                                  velocityTotalPages,
+                                  parseInt(velocityPageInput) || 1,
+                                ),
+                              );
+                              setVelocityPage(newPage);
+                              e.currentTarget.blur();
+                            }
+                          }}
+                          disabled={velocityLoading}
+                          style={{
+                            WebkitAppearance: "textfield",
+                          }}
+                          className="w-12 px-2 py-1 border border-gray-300 rounded-lg text-center text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 [&::-webkit-outer-spin-button]:[-webkit-appearance:none] [&::-webkit-outer-spin-button]:[margin:0] [&::-webkit-inner-spin-button]:[-webkit-appearance:none] [&::-webkit-inner-spin-button]:[margin:0]"
+                        />
+                        <span>of {velocityTotalPages}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() =>
+                            setVelocityPage(Math.max(1, velocityPage - 1))
+                          }
+                          disabled={velocityPage === 1 || velocityLoading}
+                          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          onClick={() =>
+                            setVelocityPage(
+                              Math.min(velocityTotalPages, velocityPage + 1),
+                            )
+                          }
+                          disabled={
+                            velocityPage === velocityTotalPages ||
+                            velocityLoading
+                          }
+                          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() =>
+                        setIsVelocityTableCollapsed(!isVelocityTableCollapsed)
+                      }
+                      className="flex items-center gap-2 px-4 py-2 mb-4 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                    >
+                      <span className="font-semibold text-gray-700">
+                        {isVelocityTableCollapsed ? "▶" : "▼"} Details Table
+                      </span>
+                    </button>
+                    {!isVelocityTableCollapsed && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm border-collapse">
+                          <thead>
+                            <tr className="bg-gray-100">
+                              <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-700">
+                                #
+                              </th>
+                              <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-700">
+                                Item Name
+                              </th>
+                              <th className="border border-gray-300 px-3 py-2 text-center font-semibold text-gray-700">
+                                2 Months Ago
+                              </th>
+                              <th className="border border-gray-300 px-3 py-2 text-center font-semibold text-gray-700">
+                                1 Month Ago
+                              </th>
+                              <th className="border border-gray-300 px-3 py-2 text-center font-semibold text-gray-700">
+                                Current Month
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {velocityData.map((item: any) => (
+                              <tr
+                                key={item.index}
+                                className="hover:bg-gray-50 transition-colors"
+                              >
+                                <td className="border border-gray-300 px-3 py-2 text-center font-medium text-gray-600">
+                                  {item.index}
+                                </td>
+                                <td
+                                  className="border border-gray-300 px-3 py-2 text-gray-700"
+                                  title={item.name}
+                                >
+                                  {item.name}
+                                </td>
+                                <td className="border border-gray-300 px-3 py-2 text-center text-gray-500">
+                                  {item.twoMonthsAgo}
+                                </td>
+                                <td className="border border-gray-300 px-3 py-2 text-center text-gray-700">
+                                  {item.oneMonthAgo}
+                                </td>
+                                <td className="border border-gray-300 px-3 py-2 text-center font-semibold text-blue-700">
+                                  {item.currentMonth}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="h-[400px] flex items-center justify-center text-gray-400">
+                  No velocity data available
+                </div>
+              )}
+            </div>
+
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <h3 className="text-xl font-bold text-gray-900">
                 Department Activity
@@ -1775,36 +2600,127 @@ export function AnalyticsPage() {
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h3 className="text-xl font-bold text-gray-900">
-              6-Month Trend Analysis
-            </h3>
-            <p className="text-sm text-gray-600 mt-1 mb-6">
-              Items distributed over time
-            </p>
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">
+                  13-Month Trend Analysis
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Items distributed over time
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setTrendFilter("all")}
+                  className={
+                    trendFilter === "all"
+                      ? "px-4 py-2 rounded-lg font-medium transition-colors bg-blue-500 text-white"
+                      : "px-4 py-2 rounded-lg font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }
+                >
+                  All Items
+                </button>
+                <button
+                  onClick={() => setTrendFilter("consumable")}
+                  className={
+                    trendFilter === "consumable"
+                      ? "px-4 py-2 rounded-lg font-medium transition-colors bg-green-500 text-white"
+                      : "px-4 py-2 rounded-lg font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }
+                >
+                  Consumables
+                </button>
+                <button
+                  onClick={() => setTrendFilter("borrowable")}
+                  className={
+                    trendFilter === "borrowable"
+                      ? "px-4 py-2 rounded-lg font-medium transition-colors bg-purple-500 text-white"
+                      : "px-4 py-2 rounded-lg font-medium transition-colors bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }
+                >
+                  Borrowables
+                </button>
+              </div>
+            </div>
             {monthlyTrendData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={monthlyTrendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="month" />
-                  <YAxis>
-                    <Label
-                      value="Number of Items"
-                      angle={-90}
-                      position="insideLeft"
-                      style={{ textAnchor: "middle" }}
-                    />
-                  </YAxis>
-                  <Tooltip />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="items"
-                    stroke="#3b82f6"
-                    strokeWidth={2}
-                    name="Items Distributed"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              <div style={{ width: "100%", position: "relative" }}>
+                <svg width="0" height="0" style={{ position: "absolute" }}>
+                  <defs>
+                    <linearGradient
+                      id="consumablesGradient"
+                      x1="0%"
+                      y1="0%"
+                      x2="0%"
+                      y2="100%"
+                    >
+                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
+                      <stop
+                        offset="100%"
+                        stopColor="#10b981"
+                        stopOpacity="0.01"
+                      />
+                    </linearGradient>
+                    <linearGradient
+                      id="borrowablesGradient"
+                      x1="0%"
+                      y1="0%"
+                      x2="0%"
+                      y2="100%"
+                    >
+                      <stop offset="0%" stopColor="#a855f7" stopOpacity="0.3" />
+                      <stop
+                        offset="100%"
+                        stopColor="#a855f7"
+                        stopOpacity="0.01"
+                      />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={monthlyTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="month" />
+                    <YAxis>
+                      <Label
+                        value="Number of Items"
+                        angle={-90}
+                        position="insideLeft"
+                        style={{ textAnchor: "middle" }}
+                      />
+                    </YAxis>
+                    <Tooltip />
+                    <Legend />
+                    {(trendFilter === "all" ||
+                      trendFilter === "consumable") && (
+                      <Area
+                        type="monotone"
+                        dataKey="consumables"
+                        stroke="#10b981"
+                        fill="url(#consumablesGradient)"
+                        strokeWidth={2}
+                        name="Consumables"
+                        opacity={consumableOpacity}
+                        isAnimationActive={true}
+                        animationDuration={500}
+                      />
+                    )}
+                    {(trendFilter === "all" ||
+                      trendFilter === "borrowable") && (
+                      <Area
+                        type="monotone"
+                        dataKey="borrowables"
+                        stroke="#a855f7"
+                        fill="url(#borrowablesGradient)"
+                        strokeWidth={2}
+                        name="Borrowables"
+                        opacity={borrowableOpacity}
+                        isAnimationActive={true}
+                        animationDuration={500}
+                      />
+                    )}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
             ) : (
               <div className="h-[300px] flex items-center justify-center text-gray-400">
                 No data available
@@ -1995,21 +2911,28 @@ export function AnalyticsPage() {
 
                 {/* NEW: Snapshot Button Area */}
                 <div className="mb-6 p-4 bg-white/10 rounded-lg border border-white/20">
-                  <h3 className="text-sm font-semibold mb-1 text-white">1. Lock Opening Balance</h3>
+                  <h3 className="text-sm font-semibold mb-1 text-white">
+                    1. Lock Opening Balance
+                  </h3>
                   <p className="text-xs text-white/80 mb-3">
-                    Run this on the 1st of every month to freeze the starting stock for your reports.
+                    Run this on the 1st of every month to freeze the starting
+                    stock for your reports.
                   </p>
                   <button
                     onClick={() => setShowSnapshotModal(true)}
                     disabled={snapshotLoading}
                     className="w-full flex items-center justify-center gap-2 bg-[#F59E0B] text-white py-2 rounded font-bold hover:bg-[#D97706] transition-colors shadow-sm disabled:opacity-50"
                   >
-                    {snapshotLoading ? "Locking Baseline..." : "Capture Monthly Snapshot"}
+                    {snapshotLoading
+                      ? "Locking Baseline..."
+                      : "Capture Monthly Snapshot"}
                   </button>
                 </div>
 
                 <div className="pt-4 border-t border-white/20">
-                  <h3 className="text-sm font-semibold mb-3 text-white">2. Generate Report</h3>
+                  <h3 className="text-sm font-semibold mb-3 text-white">
+                    2. Generate Report
+                  </h3>
                   <div className="grid grid-cols-2 gap-4 mb-6">
                     <div>
                       <label className="block text-xs font-medium text-white/80 mb-1.5">
@@ -2058,46 +2981,50 @@ export function AnalyticsPage() {
           </div>
         </div>
 
-      {/* Snapshot Confirmation Modal */}
-      {showSnapshotModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
-            <div className="p-6 border-b border-gray-200 flex items-center gap-3">
-              <div className="bg-yellow-100 p-2 rounded-full">
-                <AlertCircle className="w-6 h-6 text-yellow-600" />
+        {/* Snapshot Confirmation Modal */}
+        {showSnapshotModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+              <div className="p-6 border-b border-gray-200 flex items-center gap-3">
+                <div className="bg-yellow-100 p-2 rounded-full">
+                  <AlertCircle className="w-6 h-6 text-yellow-600" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900">
+                  Confirm Snapshot Overwrite
+                </h3>
               </div>
-              <h3 className="text-xl font-bold text-gray-900">
-                Confirm Snapshot Overwrite
-              </h3>
-            </div>
-            <div className="p-6">
-              <p className="text-sm text-gray-600 mb-4">
-                You are about to capture your current live inventory as the starting baseline for this month's reports. 
-              </p>
-              <p className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
-                <strong>Warning:</strong> If you have already captured a snapshot this month, continuing will overwrite your opening balance and RESET all weekly issuance data for the current month back to zero.
-              </p>
-            </div>
-            <div className="p-6 border-t border-gray-200 flex gap-3 justify-end bg-gray-50">
-              <button
-                onClick={() => setShowSnapshotModal(false)}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-white transition-colors text-gray-700 font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setShowSnapshotModal(false);
-                  handleCaptureSnapshot();
-                }}
-                className="px-4 py-2 bg-[#F59E0B] text-white rounded-lg hover:bg-[#D97706] transition-colors font-medium shadow-sm"
-              >
-                Confirm & Overwrite
-              </button>
+              <div className="p-6">
+                <p className="text-sm text-gray-600 mb-4">
+                  You are about to capture your current live inventory as the
+                  starting baseline for this month's reports.
+                </p>
+                <p className="text-sm text-red-600 font-medium bg-red-50 p-3 rounded-lg border border-red-100">
+                  <strong>Warning:</strong> If you have already captured a
+                  snapshot this month, continuing will overwrite your opening
+                  balance and RESET all weekly issuance data for the current
+                  month back to zero.
+                </p>
+              </div>
+              <div className="p-6 border-t border-gray-200 flex gap-3 justify-end bg-gray-50">
+                <button
+                  onClick={() => setShowSnapshotModal(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-white transition-colors text-gray-700 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSnapshotModal(false);
+                    handleCaptureSnapshot();
+                  }}
+                  className="px-4 py-2 bg-[#F59E0B] text-white rounded-lg hover:bg-[#D97706] transition-colors font-medium shadow-sm"
+                >
+                  Confirm & Overwrite
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
       </main>
     </div>
   );

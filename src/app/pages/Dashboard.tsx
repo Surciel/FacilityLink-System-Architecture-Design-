@@ -10,6 +10,7 @@ import {
   Inbox,
   BarChart3,
   LogOut,
+  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
@@ -34,6 +35,7 @@ export function Dashboard() {
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [completedToday, setCompletedToday] = useState(0);
+  const [burnRateData, setBurnRateData] = useState<any[]>([]);
   const [viewedRequests, setViewedRequests] = useState<Set<string>>(() => {
     if (typeof window === "undefined") return new Set();
     const stored = localStorage.getItem("viewedRequests");
@@ -120,6 +122,34 @@ export function Dashboard() {
     localStorage.setItem("sidebarPinned", JSON.stringify(isSidebarPinned));
   }, [isSidebarPinned]);
 
+  // Populate dummy burn rate data
+  useEffect(() => {
+    const dummyBurnRateData = [
+      {
+        name: "Whiteboard Markers",
+        burnRatePerWeek: 8,
+        currentStock: 24,
+        stockoutWeeks: 3,
+        advice: "Procure in 2 weeks",
+      },
+      {
+        name: "Cleaning Supplies",
+        burnRatePerWeek: 5,
+        currentStock: 15,
+        stockoutWeeks: 3,
+        advice: "Monitor for sudden demand spike",
+      },
+      {
+        name: "Tissue Boxes",
+        burnRatePerWeek: 12,
+        currentStock: 36,
+        stockoutWeeks: 3,
+        advice: "Consider increasing stock",
+      },
+    ];
+    setBurnRateData(dummyBurnRateData);
+  }, []);
+
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
@@ -202,7 +232,7 @@ export function Dashboard() {
     }
   };
 
-const fetchLowStockItems = async () => {
+  const fetchLowStockItems = async () => {
     const { data, error } = await supabase
       .from("inventory")
       .select(
@@ -212,25 +242,32 @@ const fetchLowStockItems = async () => {
       .limit(100);
 
     if (error) return console.error(error);
-    
+
     // Filter items that have dropped to or below the early warning threshold
     const lowStock = (data || []).filter(
       (item) =>
-        item.stock_threshold != null && item.remaining_stock <= item.stock_threshold,
+        item.stock_threshold != null &&
+        item.remaining_stock <= item.stock_threshold,
     );
-    
+
     // Sort them so the most critical items float to the top of the list
     const sortedLowStock = lowStock.sort((a, b) => {
-      const aPercent = (a.stock_threshold && a.stock_threshold > 0) ? a.remaining_stock / a.stock_threshold : 1;
-      const bPercent = (b.stock_threshold && b.stock_threshold > 0) ? b.remaining_stock / b.stock_threshold : 1;
+      const aPercent =
+        a.stock_threshold && a.stock_threshold > 0
+          ? a.remaining_stock / a.stock_threshold
+          : 1;
+      const bPercent =
+        b.stock_threshold && b.stock_threshold > 0
+          ? b.remaining_stock / b.stock_threshold
+          : 1;
       return aPercent - bPercent;
     });
 
     setLowStockItems(sortedLowStock);
   };
 
-     const fetchTotalItems = async () => {
-      const { count, error } = await supabase
+  const fetchTotalItems = async () => {
+    const { count, error } = await supabase
       .from("inventory")
       .select("*", { count: "exact", head: true });
 
@@ -558,7 +595,11 @@ const fetchLowStockItems = async () => {
                       </h2>
                     </div>
                     <button
-                      onClick={() => navigate("/admin/inventory", { state: { sortOption: "stock-low" } })}
+                      onClick={() =>
+                        navigate("/admin/inventory", {
+                          state: { sortOption: "stock-low" },
+                        })
+                      }
                       className="text-[#4A89B0] hover:text-[#3776A0] text-sm font-medium flex items-center gap-1"
                     >
                       View All <ChevronRight className="w-4 h-4" />
@@ -581,16 +622,25 @@ const fetchLowStockItems = async () => {
                   ) : (
                     lowStockItems.map((item, index) => {
                       const criticalLimit = item.critical_stock || 0;
-                      const warningLimit = item.stock_threshold || criticalLimit * 2 || 10;
+                      const warningLimit =
+                        item.stock_threshold || criticalLimit * 2 || 10;
 
                       // Calculate percentage relative to the warning limit for a better visual scale
-                      const percentage = Math.min((item.remaining_stock / warningLimit) * 100, 100);
+                      const percentage = Math.min(
+                        (item.remaining_stock / warningLimit) * 100,
+                        100,
+                      );
 
                       // Determine status colors based on the new thresholds
                       const isCritical = item.remaining_stock <= criticalLimit;
-                      const isLow = item.remaining_stock <= warningLimit && !isCritical;
+                      const isLow =
+                        item.remaining_stock <= warningLimit && !isCritical;
 
-                      const barColor = isCritical ? "bg-red-600" : isLow ? "bg-orange-500" : "bg-green-500";
+                      const barColor = isCritical
+                        ? "bg-red-600"
+                        : isLow
+                          ? "bg-orange-500"
+                          : "bg-green-500";
                       return (
                         <div
                           key={index}
@@ -616,8 +666,8 @@ const fetchLowStockItems = async () => {
                             </div>
                             <div className="w-full bg-gray-200 rounded-full h-2">
                               <div
-                              className={`h-2 rounded-full ${barColor}`}
-                              style={{ width: `${percentage}%` }}
+                                className={`h-2 rounded-full ${barColor}`}
+                                style={{ width: `${percentage}%` }}
                               />
                             </div>
                           </div>
@@ -626,6 +676,69 @@ const fetchLowStockItems = async () => {
                     })
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* Consumable Burn Rate Widget */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+              <div className="p-6 border-b border-gray-100">
+                <div className="flex items-center gap-2 mb-2">
+                  <Activity className="w-5 h-5 text-blue-600" />
+                  <h2 className="text-xl font-bold text-gray-900">
+                    Consumable Burn Rate
+                  </h2>
+                </div>
+                <p className="text-sm text-gray-600">
+                  Weekly depletion & procurement timing
+                </p>
+              </div>
+
+              <div className="p-6 space-y-4">
+                {burnRateData.length > 0 ? (
+                  burnRateData.map((item, index) => (
+                    <div
+                      key={index}
+                      className="p-4 bg-blue-50 border border-blue-100 rounded-lg"
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <span className="text-sm font-semibold text-gray-900">
+                          {item.name}
+                        </span>
+                        <span className="text-xs font-bold text-blue-700 bg-blue-200 px-2 py-1 rounded">
+                          {item.burnRatePerWeek}/wk
+                        </span>
+                      </div>
+
+                      <div className="text-xs text-gray-700 space-y-2 mb-3">
+                        <div>
+                          <span className="font-medium">Stock:</span>{" "}
+                          {item.currentStock} units
+                        </div>
+                        <div>
+                          <span className="font-medium">Stockout in:</span>{" "}
+                          {item.stockoutWeeks} weeks
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-full px-3 py-2 text-xs font-medium text-blue-700 inline-block">
+                        {item.advice}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-gray-400">
+                    No burn rate data available
+                  </div>
+                )}
+              </div>
+
+              <div className="p-6 border-t border-gray-100">
+                <button
+                  onClick={() => navigate("/admin/analytics")}
+                  className="w-full px-4 py-2.5 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] font-medium transition-colors flex items-center justify-center gap-2"
+                >
+                  View Full Report <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
             </div>
           </div>
