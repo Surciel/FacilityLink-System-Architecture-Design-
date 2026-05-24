@@ -556,7 +556,7 @@ export function Dashboard() {
                       </h2>
                     </div>
                     <button
-                      onClick={() => navigate("/admin/inventory")}
+                      onClick={() => navigate("/admin/inventory", { state: { sortOption: "stock-low" } })}
                       className="text-[#4A89B0] hover:text-[#3776A0] text-sm font-medium flex items-center gap-1"
                     >
                       View All <ChevronRight className="w-4 h-4" />
@@ -567,7 +567,7 @@ export function Dashboard() {
                   </p>
                 </div>
 
-                <div className="p-4 space-y-3">
+                <div className="p-4 space-y-3 h-96 overflow-y-auto">
                   {loading ? (
                     <div className="text-center text-gray-400 py-4">
                       Loading...
@@ -577,7 +577,7 @@ export function Dashboard() {
                       All items are well stocked!
                     </div>
                   ) : (
-                    lowStockItems.slice(0, 5).map((item, index) => {
+                    lowStockItems.map((item, index) => {
                       const minimum = item.minimum_stock || 10;
                       const percentage = Math.min(
                         (item.remaining_stock / minimum) * 100,

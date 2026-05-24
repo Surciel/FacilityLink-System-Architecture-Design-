@@ -18,7 +18,7 @@ import {
   Info,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useNavigate } from "react-router";
+import { useNavigate, useLocation } from "react-router";
 import { supabase } from "../../supabaseClient";
 
 interface Unit {
@@ -53,6 +53,7 @@ type NewItemForm = {
 
 export function InventoryPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -133,6 +134,14 @@ export function InventoryPage() {
 
     checkAuth();
   }, [navigate]);
+
+  // Check for navigation state to set sort option
+  useEffect(() => {
+    const state = location.state as { sortOption?: string } | null;
+    if (state?.sortOption === "stock-low") {
+      setSortOption("stock-low");
+    }
+  }, [location.state]);
 
   useEffect(() => {
     fetchInventory();
