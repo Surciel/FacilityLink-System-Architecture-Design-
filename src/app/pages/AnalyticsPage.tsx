@@ -475,11 +475,20 @@ export function AnalyticsPage() {
       const snapshotData = currentInventory.map((item) => ({
         item_no: item.item_no,
         period_label: periodLabel,
+        // Baseline metrics
         stock_on_hand: item.remaining_stock,
-        item_description: item.description,
+        balance_on_hand: item.remaining_stock, // Initially, balance equals starting stock
         unit_cost: item.unit_cost || 0,
+        total_cost: 0, 
+        // Flow metrics initialized to zero
+        delivery: 0,
         total_qty_issued: 0, 
-        week1: 0, week2: 0, week3: 0, week4: 0
+        week1: 0, 
+        week2: 0, 
+        week3: 0, 
+        week4: 0,
+        // Make sure item_type is included if it's required by your schema
+        item_type: (item as any).item_type || 'consumable' 
       }));
 
       // 4. Upsert into the database
