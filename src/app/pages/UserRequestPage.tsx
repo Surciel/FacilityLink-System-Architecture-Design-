@@ -1048,24 +1048,27 @@ export function UserRequestPage() {
                                       <button
                                         key={invItem.item_no}
                                         type="button"
-                                        onClick={() =>
-                                          selectFromDropdown(
-                                            index,
-                                            invItem.item_no,
-                                          )
-                                        }
+                                        onClick={() => selectFromDropdown(index, invItem.item_no)}
                                         disabled={invItem.remaining_stock <= 0}
-                                        className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                        className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center justify-between ${
                                           invItem.remaining_stock <= 0
-                                            ? "text-gray-400 line-through cursor-not-allowed"
+                                            ? "text-gray-400 bg-gray-50 cursor-not-allowed"
                                             : "text-gray-900 hover:bg-blue-50 cursor-pointer"
                                         }`}
                                       >
-                                        {invItem.item_no} -{" "}
-                                        {invItem.description}
-                                        {invItem.remaining_stock <= 0
-                                          ? " (Out of stock)"
-                                          : ""}
+                                        <span className="truncate pr-4">
+                                          <span className="font-semibold text-gray-700 mr-2">{invItem.item_no}</span> 
+                                          {invItem.description}
+                                        </span>
+                                        <span className={`flex-shrink-0 text-xs px-2 py-1 rounded font-medium ${
+                                          invItem.remaining_stock <= 0 
+                                            ? "bg-red-100 text-red-700" 
+                                            : "bg-green-100 text-green-700"
+                                        }`}>
+                                          {invItem.remaining_stock <= 0 
+                                            ? "Out of stock" 
+                                            : `${invItem.remaining_stock} left`}
+                                        </span>
                                       </button>
                                     ))}
                                 </div>
@@ -1158,24 +1161,27 @@ export function UserRequestPage() {
                                       <button
                                         key={invItem.item_no}
                                         type="button"
-                                        onClick={() =>
-                                          selectFromDropdown(
-                                            index,
-                                            invItem.item_no,
-                                          )
-                                        }
+                                        onClick={() => selectFromDropdown(index, invItem.item_no)}
                                         disabled={invItem.remaining_stock <= 0}
-                                        className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                                        className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center justify-between ${
                                           invItem.remaining_stock <= 0
-                                            ? "text-gray-400 line-through cursor-not-allowed"
+                                            ? "text-gray-400 bg-gray-50 cursor-not-allowed"
                                             : "text-gray-900 hover:bg-blue-50 cursor-pointer"
                                         }`}
                                       >
-                                        {invItem.description} ({invItem.item_no}
-                                        )
-                                        {invItem.remaining_stock <= 0
-                                          ? " (Out of stock)"
-                                          : ""}
+                                        <span className="truncate pr-4">
+                                          {invItem.description}
+                                          <span className="text-gray-500 ml-2 font-mono text-xs">({invItem.item_no})</span>
+                                        </span>
+                                        <span className={`flex-shrink-0 text-xs px-2 py-1 rounded font-medium ${
+                                          invItem.remaining_stock <= 0 
+                                            ? "bg-red-100 text-red-700" 
+                                            : "bg-green-100 text-green-700"
+                                        }`}>
+                                          {invItem.remaining_stock <= 0 
+                                            ? "Out of stock" 
+                                            : `${invItem.remaining_stock} left`}
+                                        </span>
                                       </button>
                                     ))}
                                 </div>
