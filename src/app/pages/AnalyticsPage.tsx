@@ -402,14 +402,11 @@ export function AnalyticsPage() {
   const [generating, setGenerating] = useState<string | null>(null);
   const [selectedCategoryDetail, setSelectedCategoryDetail] =
     useState<any>(null);
-  const [showCategoryDetailModal, setShowCategoryDetailModal] = useState(false);
-
   const [monthlyTrendData, setMonthlyTrendData] = useState<any[]>([]);
   const [trendFilter, setTrendFilter] = useState<
     "all" | "consumable" | "borrowable"
   >("all");
   const [showTrendAnalysis, setShowTrendAnalysis] = useState(false);
-  const [categoryDistribution, setCategoryDistribution] = useState<any[]>([]);
   const [topRequestedItems, setTopRequestedItems] = useState<any[]>([]);
   const [departmentActivity, setDepartmentActivity] = useState<any[]>([]);
   const [departmentFilter, setDepartmentFilter] = useState<
@@ -832,20 +829,6 @@ export function AnalyticsPage() {
     const topSix = Object.entries(positiveThisMonthCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 6);
-    const topSixTotal = topSix.reduce((sum, [_, count]) => sum + count, 0);
-
-    setCategoryDistribution(
-      topSix.map(([name, count], i) => ({
-        fullName: name,
-        name: shortenItemName(name, 18),
-        value:
-          topSixTotal > 0
-            ? parseFloat(((count / topSixTotal) * 100).toFixed(1))
-            : 0,
-        count,
-        color: colors[i % colors.length],
-      })),
-    );
   };
 
   const fetchDepartmentActivity = async () => {
@@ -2709,49 +2692,6 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
         </nav>
       </aside>
 
-      {showCategoryDetailModal && selectedCategoryDetail && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-2xl font-bold text-gray-900">
-                {selectedCategoryDetail.fullName}
-              </h2>
-              <p className="text-sm text-gray-600 mt-2">Detailed Analysis</p>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4">
-                <div className="text-sm text-gray-600">Percentage</div>
-                <div className="text-3xl font-bold text-[#4A89B0]">
-                  {selectedCategoryDetail.value}%
-                </div>
-              </div>
-              <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4">
-                <div className="text-sm text-gray-600">Total Requests</div>
-                <div className="text-3xl font-bold text-purple-600">
-                  {selectedCategoryDetail.count}
-                </div>
-              </div>
-              <div className="border-t border-gray-200 pt-4">
-                <h3 className="font-semibold text-gray-900 mb-2">Summary</h3>
-                <p className="text-sm text-gray-600">
-                  This item represents {selectedCategoryDetail.value}% of all
-                  requests this month, with a total of{" "}
-                  {selectedCategoryDetail.count} requests.
-                </p>
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-200">
-              <button
-                onClick={() => setShowCategoryDetailModal(false)}
-                className="w-full px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300 transition-colors font-medium"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <main
         className={`pt-16 transition-all duration-300 ${isSidebarExpanded || isSidebarPinned ? "pl-64" : "pl-20"}`}
       >
@@ -2781,72 +2721,6 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
 
           {/* Charts */}
           <div className="space-y-6">
-            {/* Category Distribution */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <h3 className="text-xl font-bold text-gray-900">
-                Category Distribution
-              </h3>
-              <p className="text-sm text-gray-600 mt-1 mb-6">
-                Percentage of requests by item (click for details)
-              </p>
-              {categoryDistribution.length > 0 ? (
-                <div className="flex gap-2 justify-center">
-                  <div className="flex-shrink-0">
-                    <ResponsiveContainer width={300} height={300}>
-                      <PieChart>
-                        <Pie
-                          data={categoryDistribution}
-                          cx="50%"
-                          cy="50%"
-                          labelLine={false}
-                          label={false}
-                          outerRadius={90}
-                          dataKey="value"
-                          isAnimationActive={false}
-                          onClick={(entry) => {
-                            setSelectedCategoryDetail(entry);
-                            setShowCategoryDetailModal(true);
-                          }}
-                          style={{ cursor: "pointer" }}
-                        >
-                          {categoryDistribution.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          formatter={(value) => `${value}%`}
-                          cursor={false}
-                          contentStyle={{ pointerEvents: "none" }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="flex items-center">
-                    <div className="space-y-2">
-                      {categoryDistribution.map((entry, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center gap-3 text-sm text-gray-700"
-                        >
-                          <span
-                            className="w-3 h-3 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: entry.color }}
-                          />
-                          <span>
-                            {entry.fullName}: {entry.value}% ({entry.count})
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="h-[300px] flex items-center justify-center text-gray-400">
-                  No data available
-                </div>
-              )}
-            </div>
-
             {/* Categorized Asset Analytics */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <h3 className="text-xl font-bold text-gray-900">
@@ -2862,8 +2736,8 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
                     Consumable Burn Rate
                   </h4>
                   {consumableBurnRate.length > 0 ? (
-                    <div className="space-y-3">
-                      {consumableBurnRate.map((item, index) => (
+                    <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                      {consumableBurnRate.slice(0, 5).map((item, index) => (
                         <div
                           key={index}
                           className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200"
@@ -2926,8 +2800,8 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
                     Borrowable Utilization
                   </h4>
                   {borrowableUtilization.length > 0 ? (
-                    <div className="space-y-3">
-                      {borrowableUtilization.map((item, index) => (
+                    <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
+                      {borrowableUtilization.slice(0, 5).map((item, index) => (
                         <div
                           key={index}
                           className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3 border border-green-200"
