@@ -406,6 +406,9 @@ export function AnalyticsPage() {
   const [categoryDistribution, setCategoryDistribution] = useState<any[]>([]);
   const [topRequestedItems, setTopRequestedItems] = useState<any[]>([]);
   const [departmentActivity, setDepartmentActivity] = useState<any[]>([]);
+  const [departmentFilter, setDepartmentFilter] = useState<
+    "all" | "colleges" | "offices"
+  >("all");
   const [totalRequestsWeek, setTotalRequestsWeek] = useState(0);
   const [itemsNeedRestock, setItemsNeedRestock] = useState(0);
 
@@ -446,6 +449,26 @@ export function AnalyticsPage() {
   const shortenItemName = (name: string, maxLength: number = 20): string => {
     if (name.length <= maxLength) return name;
     return name.substring(0, maxLength - 3) + "...";
+  };
+
+  const categorizeDepartment = (dept: string): "college" | "office" | null => {
+    const lower = dept.toLowerCase();
+    if (lower.includes("college")) return "college";
+    if (
+      lower.includes("office") ||
+      lower.includes("services") ||
+      lower.includes("registrar") ||
+      lower.includes("administration") ||
+      lower.includes("library") ||
+      lower.includes("counseling") ||
+      lower.includes("research") ||
+      lower.includes("guidance") ||
+      lower.includes("maintenance") ||
+      lower.includes("management") ||
+      lower.includes("division")
+    )
+      return "office";
+    return null;
   };
 
   const fullMonths = [
@@ -518,16 +541,28 @@ export function AnalyticsPage() {
     });
   }, [topRequestedItems]);
 
-  // ── Department activity with simple forecast ─────────────────────────────
+  // ── Department activity with simple forecast + filtering ───────────────────
   const deptWithForecast = useMemo(() => {
     if (!departmentActivity.length) return [];
-    const total = departmentActivity.reduce((s, d) => s + d.requests, 0);
-    return departmentActivity.map((d) => ({
+
+    // Filter departments based on selected category
+    let filtered = departmentActivity;
+    if (departmentFilter !== "all") {
+      filtered = departmentActivity.filter((d) => {
+        const category = categorizeDepartment(d.dept);
+        return departmentFilter === "colleges"
+          ? category === "college"
+          : category === "office";
+      });
+    }
+
+    const total = filtered.reduce((s, d) => s + d.requests, 0);
+    return filtered.map((d) => ({
       ...d,
       // Simple forecast: assume 5-15% growth based on share
       predicted: Math.round(d.requests * (1 + (Math.random() * 0.1 + 0.05))),
     }));
-  }, [departmentActivity]);
+  }, [departmentActivity, departmentFilter]);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -1081,9 +1116,16 @@ export function AnalyticsPage() {
           displayName: `#${index + 1}`,
         }));
 
+      const calculatedTotalPages = Math.ceil(
+        sortedVelocity.length / itemsPerPage,
+      );
+      setVelocityTotalPages(calculatedTotalPages);
       setVelocityData(paginatedVelocity);
-      setVelocityTotalPages(Math.ceil(sortedVelocity.length / itemsPerPage));
-      setVelocityPage(page);
+
+      // Reset to page 1 if current page exceeds total pages
+      if (page > calculatedTotalPages && calculatedTotalPages > 0) {
+        setVelocityPage(1);
+      }
     } catch (error) {
       console.error("Error fetching velocity data:", error);
     } finally {
@@ -2891,15 +2933,38 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
 
             {/* Department Activity — WITH FORECAST */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <h3 className="text-xl font-bold text-gray-900">
-                Department Activity
-              </h3>
-              <p className="text-sm text-gray-600 mt-1 mb-6">
-                Requests by department + next month forecast
-                <span className="ml-2 text-xs text-purple-600 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded-full">
-                  lighter bar = predicted
-                </span>
-              </p>
+              <div className="flex justify-between items-start mb-6 gap-4">
+                <div className="flex-1">
+                  <h3 className="text-xl font-bold text-gray-900">
+                    Department Activity
+                  </h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Requests by department + next month forecast
+                    <span className="ml-2 text-xs text-purple-600 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded-full">
+                      lighter bar = predicted
+                    </span>
+                  </p>
+                </div>
+                <div className="flex gap-2 flex-wrap justify-end">
+                  {(["all", "colleges", "offices"] as const).map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setDepartmentFilter(filter)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                        departmentFilter === filter
+                          ? "bg-blue-500 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      {filter === "all"
+                        ? "All"
+                        : filter === "colleges"
+                          ? "Colleges"
+                          : "Offices"}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {deptWithForecast.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
                   <BarChart
@@ -3159,72 +3224,149 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
               Top requested items with trend + next month prediction
             </p>
             {topItemsWithForecast.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {topItemsWithForecast.map((item, index) => (
-                  <div
-                    key={index}
-                    className="p-4 bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-lg"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <div className="text-sm font-semibold text-gray-900">
-                          {item.name}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {topItemsWithForecast.map((item, index) => {
+                  const statusColor = item.isNew
+                    ? "blue"
+                    : item.adviceType === "increase"
+                      ? "orange"
+                      : item.trend > 0
+                        ? "green"
+                        : "gray";
+                  const statusBgColor = {
+                    blue: "bg-blue-50 border-blue-200",
+                    orange: "bg-orange-50 border-orange-200",
+                    green: "bg-green-50 border-green-200",
+                    gray: "bg-gray-50 border-gray-200",
+                  }[statusColor];
+                  const trendBadgeColor = {
+                    blue: "bg-blue-100 text-blue-700",
+                    orange: "bg-orange-100 text-orange-700",
+                    green: "bg-green-100 text-green-700",
+                    gray: "bg-gray-100 text-gray-700",
+                  }[statusColor];
+
+                  return (
+                    <div
+                      key={index}
+                      className={`p-5 border rounded-lg transition-all hover:shadow-md ${statusBgColor}`}
+                    >
+                      {/* Header with title, request count, and trend */}
+                      <div className="flex items-center justify-between gap-3 mb-4">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold text-gray-900 text-sm leading-tight truncate">
+                            {item.name}
+                          </h4>
+                          <div className="text-xl font-bold text-[#4A89B0] mt-1">
+                            {item.requests}
+                            <span className="text-xs font-normal text-gray-600 ml-1">
+                              this month
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-2xl font-bold text-[#4A89B0] mt-1">
-                          {item.requests}
-                        </div>
-                        <div className="text-xs text-gray-600">
-                          requests this month
+                        <div
+                          className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${trendBadgeColor}`}
+                        >
+                          {item.trend > 0 ? (
+                            <TrendingUp className="w-3.5 h-3.5" />
+                          ) : (
+                            <TrendingDown className="w-3.5 h-3.5" />
+                          )}
+                          {item.trendLabel}
                         </div>
                       </div>
+
+                      {/* Forecast comparison bar */}
+                      <div className="mb-4 pb-4 border-b border-gray-200">
+                        <div className="text-xs font-semibold text-gray-700 mb-5 block">
+                          Month comparison
+                        </div>
+
+                        {/* Current vs Predicted Comparison */}
+                        <div className="space-y-3">
+                          {/* Current Bar */}
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 text-right">
+                              <div className="text-xl font-bold text-[#4A89B0]">
+                                {item.requests}
+                              </div>
+                            </div>
+                            <div className="flex-1 flex items-center gap-2">
+                              <div
+                                className="bg-gradient-to-r from-[#4A89B0] to-[#7dd3fc] rounded-lg shadow-md border border-[#4A89B0]/20 transition-all hover:shadow-lg"
+                                style={{
+                                  width: `${Math.max(20, (item.requests / Math.max(item.requests, item.predicted)) * 250)}px`,
+                                  height: "28px",
+                                }}
+                              />
+                              <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
+                                Current
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Predicted Bar */}
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 text-right">
+                              <div className="text-xl font-bold text-purple-600">
+                                {item.predicted}
+                              </div>
+                            </div>
+                            <div className="flex-1 flex items-center gap-2">
+                              <div
+                                className="bg-gradient-to-r from-purple-500 to-purple-300 rounded-lg shadow-md border border-purple-400/20 transition-all hover:shadow-lg"
+                                style={{
+                                  width: `${Math.max(20, (item.predicted / Math.max(item.requests, item.predicted)) * 250)}px`,
+                                  height: "28px",
+                                }}
+                              />
+                              <span className="text-xs font-semibold text-purple-700 whitespace-nowrap">
+                                Predicted
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Prediction value */}
+                      <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-100">
+                        <div className="text-xs text-purple-700 font-medium">
+                          Next month forecast
+                        </div>
+                        <div className="text-2xl font-bold text-purple-600 mt-2 flex items-baseline gap-1">
+                          {item.predicted}
+                          <span className="text-xs font-normal text-purple-600">
+                            units
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Status/Advice badge */}
                       <div
-                        className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 ${item.isNew ? "bg-blue-100 text-blue-700" : item.trend > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
+                        className={`p-3 rounded-lg text-xs flex items-start gap-2.5 ${
+                          item.adviceType === "new"
+                            ? "bg-blue-100 text-blue-800"
+                            : item.adviceType === "increase"
+                              ? "bg-orange-100 text-orange-800"
+                              : item.adviceType === "monitor"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-gray-100 text-gray-700"
+                        }`}
                       >
-                        {item.trend > 0 ? (
-                          <TrendingUp className="w-3 h-3" />
-                        ) : (
-                          <TrendingDown className="w-3 h-3" />
-                        )}
-                        {item.trendLabel}
+                        <span className="text-base flex-shrink-0 leading-none mt-0.5">
+                          {item.adviceType === "increase"
+                            ? "⚠️"
+                            : item.adviceType === "new"
+                              ? "✨"
+                              : item.adviceType === "monitor"
+                                ? "👁️"
+                                : "✓"}
+                        </span>
+                        <span className="leading-snug">{item.advice}</span>
                       </div>
                     </div>
-                    {/* Mini forecast bar */}
-                    <div className="mt-3 mb-2 flex items-end gap-1 h-10">
-                      <div className="flex flex-col items-center gap-0.5 flex-1">
-                        <div
-                          className="w-full bg-[#7dd3fc] rounded-t"
-                          style={{
-                            height: `${Math.min(100, (item.requests / Math.max(item.requests, item.predicted)) * 40)}px`,
-                          }}
-                        />
-                        <span className="text-xs text-gray-500">Now</span>
-                      </div>
-                      <div className="flex flex-col items-center gap-0.5 flex-1">
-                        <div
-                          className="w-full bg-purple-300 rounded-t border-2 border-dashed border-purple-400"
-                          style={{
-                            height: `${Math.min(100, (item.predicted / Math.max(item.requests, item.predicted)) * 40)}px`,
-                          }}
-                        />
-                        <span className="text-xs text-purple-600">Pred.</span>
-                      </div>
-                    </div>
-                    <div className="text-xs text-purple-600 font-medium mb-2">
-                      📊 Predicted next month: <strong>{item.predicted}</strong>
-                    </div>
-                    <div className="pt-2 border-t border-gray-200 text-xs text-gray-700">
-                      <span
-                        className={`flex items-center gap-1 ${item.adviceType === "new" ? "text-blue-600" : item.adviceType === "increase" ? "text-orange-600" : "text-gray-500"}`}
-                      >
-                        {item.adviceType !== "new" &&
-                        item.adviceType !== "stable" ? (
-                          <AlertCircle className="w-3 h-3 text-orange-500" />
-                        ) : null}
-                        {item.advice}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="py-12 flex items-center justify-center text-gray-400">
