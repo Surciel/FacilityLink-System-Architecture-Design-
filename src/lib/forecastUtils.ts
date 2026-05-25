@@ -1,6 +1,6 @@
 import * as ss from "simple-statistics";
 import { PolynomialRegression } from "ml-regression";
-
+ 
 // ── LINEAR REGRESSION (simple-statistics) ──────────────────────────────────
 export function getLinearPredictions(data: number[], stepsAhead: number = 3) {
   if (data.length < 2)
@@ -11,17 +11,17 @@ export function getLinearPredictions(data: number[], stepsAhead: number = 3) {
       rSquared: 0,
       line: (x: number) => 0,
     };
-
+ 
   const points: [number, number][] = data.map((y, x) => [x, y]);
   const regression = ss.linearRegression(points);
   const line = ss.linearRegressionLine(regression);
   const rSquared = ss.rSquared(points, line);
-
+ 
   const predicted: number[] = [];
   for (let i = 0; i < stepsAhead; i++) {
     predicted.push(Math.max(0, Math.round(line(data.length + i))));
   }
-
+ 
   return {
     predicted,
     slope: regression.m,
@@ -30,7 +30,7 @@ export function getLinearPredictions(data: number[], stepsAhead: number = 3) {
     line,
   };
 }
-
+ 
 // ── POLYNOMIAL REGRESSION (ml-regression) ──────────────────────────────────
 export function getPolynomialPredictions(
   data: number[],
@@ -38,30 +38,29 @@ export function getPolynomialPredictions(
   degree: number = 2,
 ) {
   if (data.length < 3) return { predicted: [], stdDev: 0 };
-
+ 
   const xs = data.map((_, i) => i);
   const ys = [...data];
   const reg = new PolynomialRegression(xs, ys, degree);
-
+ 
   const predicted: number[] = [];
   for (let i = 0; i < stepsAhead; i++) {
     predicted.push(Math.max(0, Math.round(reg.predict(data.length + i))));
   }
-
+ 
   const residuals = data.map((actual, i) => actual - reg.predict(i));
   const stdDev = ss.standardDeviation(residuals);
-
+ 
   return { predicted, stdDev };
 }
-
+ 
 // ── COMBINED FORECAST ───────────────────────────────────────────────────────
-// Automatically picks linear or polynomial based on R² score
 export function buildForecast(data: number[], stepsAhead: number = 3) {
   if (data.length < 2) return null;
-
+ 
   const linear = getLinearPredictions(data, stepsAhead);
   const poly = getPolynomialPredictions(data, stepsAhead);
-
+ 
   return {
     linear,
     poly,
@@ -71,14 +70,14 @@ export function buildForecast(data: number[], stepsAhead: number = 3) {
       linear.slope > 1 ? "rising" : linear.slope < -1 ? "falling" : "stable",
   };
 }
-
+ 
 // ── INVENTORY STATS (simple-statistics) ────────────────────────────────────
 export function computeInventoryStats(
   burnRates: number[],
   stockLevels: number[],
 ) {
   if (burnRates.length === 0) return null;
-
+ 
   return {
     meanBurnRate: ss.mean(burnRates),
     medianBurnRate: ss.median(burnRates),
@@ -92,7 +91,7 @@ export function computeInventoryStats(
         : "N/A",
   };
 }
-
+ 
 // ── PROCUREMENT ROWS ────────────────────────────────────────────────────────
 export function buildProcurementRows(consumableBurnRate: any[]) {
   return consumableBurnRate.map((item) => {
@@ -102,13 +101,33 @@ export function buildProcurementRows(consumableBurnRate: any[]) {
       0,
       safetyStock + predDemand - item.currentStock,
     );
+ 
+    // ── FIXED: zero-stock items must never show "∞ weeks left" ──────────────
+    // Old logic:  burnRate > 0 ? stock/burnRate : Infinity
+    //   → items with 0 stock AND 0 burn rate got Infinity → always "ok"
+    //
+    // New logic priority:
+    //   1. stock is 0              → 0 weeks left (order immediately)
+    //   2. burn rate is known > 0  → stock / burnRate
+    //   3. stock > 0, no burn data → Infinity (genuinely unknown, flag as ok)
     const weeksLeft =
-      item.weeklyBurnRate > 0
-        ? item.currentStock / item.weeklyBurnRate
-        : Infinity;
+      item.currentStock <= 0
+        ? 0                                          // out of stock → order now
+        : item.weeklyBurnRate > 0
+        ? item.currentStock / item.weeklyBurnRate    // normal calculation
+        : Infinity;                                  // has stock, no usage data
+ 
+    // ── STATUS thresholds ────────────────────────────────────────────────────
+    //   0 weeks  → order (out of stock)
+    //  <4 weeks  → order (critically low)
+    //  <8 weeks  → watch (getting low)
+    //   else     → ok
     const status: "order" | "watch" | "ok" =
-      weeksLeft < 2 ? "order" : weeksLeft < 4 ? "watch" : "ok";
-
+      weeksLeft <= 0 ? "order"
+      : weeksLeft < 4 ? "order"
+      : weeksLeft < 8 ? "watch"
+      : "ok";
+ 
     return {
       description: item.description,
       currentStock: item.currentStock,
@@ -117,8 +136,6 @@ export function buildProcurementRows(consumableBurnRate: any[]) {
       predDemand,
       suggestedOrder,
       status,
-      unitCost: item.unitCost || 0,
-      estimatedCost: suggestedOrder * (item.unitCost || 0),
     };
   });
 }

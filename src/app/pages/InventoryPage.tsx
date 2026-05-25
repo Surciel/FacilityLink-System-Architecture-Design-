@@ -89,18 +89,12 @@ export function InventoryPage() {
     const stored = localStorage.getItem("sidebarPinned");
     return stored ? JSON.parse(stored) : false;
   });
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [updateMode, setUpdateMode] = useState<"add" | "edit" | "remove">(
-    "add",
-  );
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [editingItem, setEditingItem] = useState<EditableInventoryItem | null>(
     null,
   );
-  const [editSearchItemNo, setEditSearchItemNo] = useState("");
-  const [editSearchDescription, setEditSearchDescription] = useState("");
   const [editOriginalItemNo, setEditOriginalItemNo] = useState("");
-  const [removeSearchItemNo, setRemoveSearchItemNo] = useState("");
-  const [removeSearchDescription, setRemoveSearchDescription] = useState("");
   const [itemIdPrefix, setItemIdPrefix] = useState<"JMS" | "GYM-S">("JMS");
   const [itemIdNumber, setItemIdNumber] = useState("");
   const [itemIdLetter, setItemIdLetter] = useState("");
@@ -386,7 +380,7 @@ export function InventoryPage() {
       setItemIdNumber("");
       setItemIdLetter("");
       setItemIdExists(false);
-      setShowUpdateModal(false);
+      setShowAddModal(false);
       fetchInventory();
     }
     setActionLoading(false);
@@ -505,7 +499,7 @@ export function InventoryPage() {
 
         setEditingItem(null);
         setEditOriginalItemNo("");
-        setShowUpdateModal(false);
+        setShowEditModal(false);
         fetchInventory();
         return;
       }
@@ -569,7 +563,7 @@ export function InventoryPage() {
 
         setEditingItem(null);
         setEditOriginalItemNo("");
-        setShowUpdateModal(false);
+        setShowEditModal(false);
         fetchInventory();
       }
     } catch (err) {
@@ -738,24 +732,46 @@ export function InventoryPage() {
     setShowRestockModal(true);
   };
 
-  const openUpdateModal = (mode: "add" | "edit" | "remove") => {
-    setUpdateMode(mode);
-    setShowUpdateModal(true);
-    if (mode === "add") {
-      setNewItem({
-        item_no: "",
-        description: "",
-        unit_id: "",
-        remaining_stock: "",
-        critical_stock: "",
-        stock_threshold: "",
-      });
-      setItemIdPrefix("JMS");
-      setItemIdNumber("");
-      setItemIdLetter("");
-      setItemIdExists(false);
-      setItemNameExists(false);
-    }
+  const openAddModal = () => {
+    setShowAddModal(true);
+    setNewItem({
+      item_no: "",
+      description: "",
+      unit_id: "",
+      remaining_stock: "",
+      critical_stock: "",
+      stock_threshold: "",
+    });
+    setItemIdPrefix("JMS");
+    setItemIdNumber("");
+    setItemIdLetter("");
+    setItemIdExists(false);
+    setItemNameExists(false);
+  };
+
+  const openEditModal = (item: InventoryItem) => {
+    const parsed = parseItemNo(item.item_no);
+    setItemIdPrefix(parsed.prefix);
+    setItemIdNumber(parsed.number);
+    setItemIdLetter(parsed.letter);
+    setEditOriginalItemNo(item.item_no);
+    setItemIdExists(false);
+    setEditingItem({
+      ...item,
+      remaining_stock:
+        item.remaining_stock === 0
+          ? ""
+          : item.remaining_stock,
+      critical_stock:
+        item.critical_stock === 0
+          ? ""
+          : item.critical_stock,
+      stock_threshold:
+        item.stock_threshold === 0
+          ? ""
+          : item.stock_threshold,
+    } as EditableInventoryItem);
+    setShowEditModal(true);
   };
 
   // Real-time check for duplicate Item ID
@@ -810,11 +826,12 @@ const getStockStatus = (item: InventoryItem) => {
       icon: Package,
     };
   }
-
+ 
   const currentStock = item.remaining_stock;
-  const critical = item.critical_stock || 0;
-  const threshold = item.stock_threshold || 0;
-
+  const critical  = item.critical_stock;           // may be 0 — that's valid
+  const threshold = item.stock_threshold ?? 0;
+ 
+  // At or below the emergency floor
   if (currentStock <= critical) {
     return {
       label: "Critical",
@@ -822,23 +839,25 @@ const getStockStatus = (item: InventoryItem) => {
       icon: AlertTriangle,
     };
   }
-
-  if (currentStock <= threshold) {
+ 
+  // Between critical and the early-warning threshold
+  if (threshold > 0 && currentStock <= threshold) {
     return {
       label: "Low",
       color: "text-orange-600 bg-orange-50",
       icon: TrendingDown,
     };
   }
-
-  if (currentStock <= threshold * 1.5) {
+ 
+  // Just above threshold — getting there
+  if (threshold > 0 && currentStock <= threshold * 1.5) {
     return {
       label: "Stable",
       color: "text-blue-600 bg-blue-50",
       icon: Package,
     };
   }
-
+ 
   return {
     label: "Adequate",
     color: "text-green-600 bg-green-50",
@@ -875,8 +894,11 @@ const getStockStatus = (item: InventoryItem) => {
     0,
   );
   const lowStockCount = inventory.filter(
-    (item) => item.critical_stock && item.remaining_stock < item.critical_stock,
-  ).length;
+  (item) =>
+    item.critical_stock !== undefined &&
+    item.critical_stock !== null &&
+    item.remaining_stock <= item.critical_stock,
+).length;
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -1007,11 +1029,11 @@ const getStockStatus = (item: InventoryItem) => {
                 </p>
               </div>
               <button
-                onClick={() => openUpdateModal("add")}
+                onClick={() => openAddModal()}
                 className="inline-flex items-center gap-2 px-6 py-3 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors shadow-md"
               >
-                <Edit className="w-5 h-5" />
-                Update Inventory
+                <Plus className="w-5 h-5" />
+                Add New Item
               </button>
             </div>
 
@@ -1229,13 +1251,22 @@ const getStockStatus = (item: InventoryItem) => {
                               </span>
                             </td>
                             <td className="px-6 py-4">
-                              <button
-                                onClick={() => openRestockModal(item)}
-                                className="inline-flex items-center gap-1 px-3 py-1 bg-[#4A89B0] text-white text-sm rounded-lg hover:bg-[#3776A0] transition-colors"
-                              >
-                                <Plus className="w-4 h-4" />
-                                Restock
-                              </button>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => openRestockModal(item)}
+                                  className="inline-flex items-center gap-1 px-3 py-1 bg-[#4A89B0] text-white text-sm rounded-lg hover:bg-[#3776A0] transition-colors"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                  Restock
+                                </button>
+                                <button
+                                  onClick={() => openEditModal(item)}
+                                  className="inline-flex items-center gap-1 px-3 py-1 bg-[#6B21A8] text-white text-sm rounded-lg hover:bg-[#581C87] transition-colors"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                  Edit
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1365,765 +1396,504 @@ const getStockStatus = (item: InventoryItem) => {
               </div>
             )}
 
-            {/* Update Inventory Modal */}
-            {showUpdateModal && (
+            {/* Add New Item Modal */}
+            {showAddModal && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+                <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col">
                   <div className="p-6 border-b border-gray-200 flex items-center justify-between">
                     <h3 className="text-xl font-bold text-gray-900">
-                      Update Inventory
+                      Add New Item
                     </h3>
                     <button
-                      onClick={() => setShowUpdateModal(false)}
+                      onClick={() => setShowAddModal(false)}
                       className="text-gray-400 hover:text-gray-600"
                     >
                       <X className="w-6 h-6" />
                     </button>
                   </div>
 
-                  {/* Tabs */}
-                  <div className="border-b border-gray-200 flex">
-                    {(["add", "edit", "remove"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        onClick={() => {
-                          setUpdateMode(mode);
-                          setEditSearchItemNo("");
-                          setEditSearchDescription("");
-                          setRemoveSearchItemNo("");
-                          setRemoveSearchDescription("");
-                        }}
-                        className={`flex-1 px-6 py-4 font-medium transition-colors flex items-center justify-center gap-2 ${
-                          updateMode === mode
-                            ? mode === "remove"
-                              ? "border-b-2 border-red-500 text-red-600 bg-red-50"
-                              : "border-b-2 border-[#4A89B0] text-[#4A89B0] bg-blue-50"
-                            : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                        }`}
-                      >
-                        {mode === "add" && (
-                          <>
-                            <Plus className="w-5 h-5" /> Add New Item
-                          </>
-                        )}
-                        {mode === "edit" && (
-                          <>
-                            <Edit className="w-5 h-5" /> Edit/Adjust Items
-                          </>
-                        )}
-                        {mode === "remove" && (
-                          <>
-                            <Trash2 className="w-5 h-5" /> Remove Items
-                          </>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="overflow-y-auto" style={{ height: "500px" }}>
-                    {/* ADD TAB */}
-                    {updateMode === "add" && (
-                      <div className="p-6 space-y-6">
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                          <p className="text-sm text-blue-800">
-                            Add a new item to your inventory. Fill in all
-                            required fields marked with *.
-                          </p>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Item ID *
-                            </label>
-                            <div className="flex gap-2 items-center">
-                              <select
-                                value={itemIdPrefix}
-                                onChange={(e) => {
-                                  const newPrefix = e.target.value as
-                                    | "JMS"
-                                    | "GYM-S";
-                                  setItemIdPrefix(newPrefix);
-                                  checkItemIdExists(
-                                    newPrefix,
-                                    itemIdNumber,
-                                    itemIdLetter,
-                                  );
-                                }}
-                                className="px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] font-semibold text-gray-900 cursor-pointer transition-colors hover:border-gray-400"
-                              >
-                                <option value="JMS">JMS</option>
-                                <option value="GYM-S">GYM-S</option>
-                              </select>
-                              <input
-                                type="text"
-                                value={itemIdNumber}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  if (value === "" || /^\d{0,3}$/.test(value)) {
-                                    setItemIdNumber(value);
-                                    checkItemIdExists(
-                                      itemIdPrefix,
-                                      value,
-                                      itemIdLetter,
-                                    );
-                                  }
-                                }}
-                                placeholder="000"
-                                maxLength={3}
-                                className="w-20 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-center font-semibold text-gray-900 transition-colors hover:border-gray-400"
-                              />
-                              <input
-                                type="text"
-                                value={itemIdLetter}
-                                onChange={(e) => {
-                                  const value = e.target.value
-                                    .toUpperCase()
-                                    .slice(0, 1);
-                                  if (value === "" || /^[A-Z]$/.test(value)) {
-                                    setItemIdLetter(value);
-                                    checkItemIdExists(
-                                      itemIdPrefix,
-                                      itemIdNumber,
-                                      value,
-                                    );
-                                  }
-                                }}
-                                placeholder="A"
-                                maxLength={1}
-                                className="w-12 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-center font-semibold text-gray-900 transition-colors hover:border-gray-400 uppercase"
-                              />
-                              <span className="text-sm text-gray-500 font-mono bg-gray-100 px-3 py-1.5 rounded-lg">
-                                →{" "}
-                                {buildItemNo(
-                                  itemIdPrefix,
+                  <div className="overflow-y-auto flex-1">
+                    <div className="p-6 space-y-6">
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <p className="text-sm text-blue-800">
+                          Add a new item to your inventory. Fill in all
+                          required fields marked with *.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Item ID *
+                          </label>
+                          <div className="flex gap-2 items-center">
+                            <select
+                              value={itemIdPrefix}
+                              onChange={(e) => {
+                                const newPrefix = e.target.value as
+                                  | "JMS"
+                                  | "GYM-S";
+                                setItemIdPrefix(newPrefix);
+                                checkItemIdExists(
+                                  newPrefix,
                                   itemIdNumber,
                                   itemIdLetter,
-                                )}
-                              </span>
-                            </div>
-                            {itemIdExists && (
-                              <p className="text-xs text-red-600 mt-1 font-medium">
-                                ⚠ Item ID{" "}
-                                {itemIdPrefix === "JMS"
-                                  ? `JMS${itemIdNumber}${itemIdLetter.toUpperCase()}`
-                                  : `GYM-S-${itemIdNumber}${itemIdLetter.toUpperCase()}`}{" "}
-                                already exists
-                              </p>
-                            )}
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Unit *
-                            </label>
-                            <div className="flex gap-2">
-                              <select
-                                value={newItem.unit_id}
-                                onChange={(e) =>
-                                  setNewItem({
-                                    ...newItem,
-                                    unit_id: e.target.value,
-                                  })
-                                }
-                                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                              >
-                                <option value="">Select a unit...</option>
-                                {availableUnits
-                                  .filter(
-                                    (unit) =>
-                                      unit.name.toLowerCase() !== "unit",
-                                  )
-                                  .map((unit) => (
-                                    <option key={unit.pkid} value={unit.pkid}>
-                                      {unit.name}
-                                    </option>
-                                  ))}
-                              </select>
-                              <button
-                                type="button"
-                                onClick={() => setShowAddUnitModal(true)}
-                                className="px-4 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors flex items-center justify-center"
-                                title="Add new unit"
-                              >
-                                <Plus className="w-5 h-5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Item Name *
-                            </label>
-                            <input
-                              type="text"
-                              value={newItem.description}
-                              onChange={(e) => {
-                                setNewItem({
-                                  ...newItem,
-                                  description: e.target.value,
-                                });
-                                checkItemNameExists(e.target.value);
+                                );
                               }}
-                              placeholder="e.g., Whiteboard Marker"
-                              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent ${
-                                itemNameExists
-                                  ? "border-red-500 focus:ring-red-500"
-                                  : "border-gray-300"
-                              }`}
-                            />
-                            {itemNameExists && (
-                              <p className="text-red-500 text-sm mt-1">
-                                ⚠ An item with this name already exists
-                              </p>
-                            )}
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Initial Stock *
-                            </label>
+                              className="px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] font-semibold text-gray-900 cursor-pointer transition-colors hover:border-gray-400"
+                            >
+                              <option value="JMS">JMS</option>
+                              <option value="GYM-S">GYM-S</option>
+                            </select>
                             <input
                               type="text"
-                              value={newItem.remaining_stock}
+                              value={itemIdNumber}
                               onChange={(e) => {
                                 const value = e.target.value;
-                                if (
-                                  value === "" ||
-                                  (/^\d+$/.test(value) && parseInt(value) >= 0)
-                                ) {
-                                  const initialStock = value === "" ? 0 : parseInt(value);
-                                  const critical = Math.ceil(initialStock * 0.1);
-                                  const threshold = Math.ceil(initialStock * 0.3);
-
-                                  setNewItem({
-                                    ...newItem,
-                                    remaining_stock: value === "" ? "" : initialStock,
-                                    critical_stock: critical,
-                                    stock_threshold: threshold,
-                                  });
+                                if (value === "" || /^\d{0,3}$/.test(value)) {
+                                  setItemIdNumber(value);
+                                  checkItemIdExists(
+                                    itemIdPrefix,
+                                    value,
+                                    itemIdLetter,
+                                  );
                                 }
                               }}
-                              placeholder="0"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                              placeholder="000"
+                              maxLength={3}
+                              className="w-20 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-center font-semibold text-gray-900 transition-colors hover:border-gray-400"
                             />
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              <span className="flex items-center gap-2">
-                                Critical Stock (Emergency Floor) *
-                                <span title="Absolute minimum - items must never go below this level">
-                                  <Info className="w-4 h-4 text-gray-400" />
-                                </span>
-                              </span>
-                            </label>
                             <input
                               type="text"
-                              value={newItem.critical_stock}
-                              readOnly
-                              placeholder="0"
-                              className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-100 cursor-not-allowed text-gray-500"
+                              value={itemIdLetter}
+                              onChange={(e) => {
+                                const value = e.target.value
+                                  .toUpperCase()
+                                  .slice(0, 1);
+                                if (value === "" || /^[A-Z]$/.test(value)) {
+                                  setItemIdLetter(value);
+                                  checkItemIdExists(
+                                    itemIdPrefix,
+                                    itemIdNumber,
+                                    value,
+                                  );
+                                }
+                              }}
+                              placeholder="A"
+                              maxLength={1}
+                              className="w-12 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-center font-semibold text-gray-900 transition-colors hover:border-gray-400 uppercase"
                             />
+                            <span className="text-sm text-gray-500 font-mono bg-gray-100 px-3 py-1.5 rounded-lg">
+                              →{" "}
+                              {buildItemNo(
+                                itemIdPrefix,
+                                itemIdNumber,
+                                itemIdLetter,
+                              )}
+                            </span>
                           </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              <span className="flex items-center gap-2">
-                                Stock Threshold (Early Warning) *
-                                <span title="Alert threshold - triggers early warning notifications">
-                                  <Info className="w-4 h-4 text-gray-400" />
-                                </span>
-                              </span>
-                            </label>
-                            <input
-                              type="text"
-                              value={newItem.stock_threshold}
-                              readOnly
-                              placeholder="0"
-                              className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-100 cursor-not-allowed text-gray-500"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex justify-end gap-3 pt-4">
-                          <button
-                            onClick={() => setShowUpdateModal(false)}
-                            className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={handleAddItem}
-                            disabled={actionLoading}
-                            className="px-6 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors flex items-center gap-2 disabled:opacity-50"
-                          >
-                            <Plus className="w-5 h-5" />
-                            {actionLoading
-                              ? "Adding..."
-                              : "Add Item to Inventory"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* EDIT TAB */}
-                    {updateMode === "edit" && (
-                      <div className="p-6 space-y-6">
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                          <p className="text-sm text-blue-800">
-                            Select an item to edit its details or adjust
-                            quantity.
-                          </p>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Search by Item No
-                            </label>
-                            <input
-                              type="text"
-                              value={editSearchItemNo}
-                              onChange={(e) =>
-                                setEditSearchItemNo(e.target.value)
-                              }
-                              placeholder="e.g., JMS010"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Search by Description
-                            </label>
-                            <input
-                              type="text"
-                              value={editSearchDescription}
-                              onChange={(e) =>
-                                setEditSearchDescription(e.target.value)
-                              }
-                              placeholder="e.g., Air Freshener"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                            />
-                          </div>
-                        </div>
-                        {inventory.length === 0 ? (
-                          <div className="p-12 text-center">
-                            <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                            <p className="text-gray-600">
-                              No items in inventory yet
+                          {itemIdExists && (
+                            <p className="text-xs text-red-600 mt-1 font-medium">
+                              ⚠ Item ID{" "}
+                              {itemIdPrefix === "JMS"
+                                ? `JMS${itemIdNumber}${itemIdLetter.toUpperCase()}`
+                                : `GYM-S-${itemIdNumber}${itemIdLetter.toUpperCase()}`}{" "}
+                              already exists
                             </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {inventory
-                              .filter(
-                                (item) =>
-                                  (editSearchItemNo === "" ||
-                                    item.item_no
-                                      .toLowerCase()
-                                      .includes(
-                                        editSearchItemNo.toLowerCase(),
-                                      )) &&
-                                  (editSearchDescription === "" ||
-                                    item.description
-                                      .toLowerCase()
-                                      .includes(
-                                        editSearchDescription.toLowerCase(),
-                                      )),
-                              )
-                              .map((item) => (
-                                <div
-                                  key={item.item_no}
-                                  className="border border-gray-200 rounded-lg p-4 hover:border-[#4A89B0] transition-colors"
-                                >
-                                  {editingItem &&
-                                  editOriginalItemNo === item.item_no ? (
-                                    <div className="space-y-4">
-                                      <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                          <label className="block text-xs font-medium text-gray-700 mb-1">
-                                            Item ID *
-                                          </label>
-                                          <div className="flex gap-2 items-center">
-                                            <select
-                                              value={itemIdPrefix}
-                                              onChange={(e) => {
-                                                const newPrefix = e.target
-                                                  .value as "JMS" | "GYM-S";
-                                                setItemIdPrefix(newPrefix);
-                                                checkItemIdExists(
-                                                  newPrefix,
-                                                  itemIdNumber,
-                                                  itemIdLetter,
-                                                  editOriginalItemNo,
-                                                );
-                                              }}
-                                              className="px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm"
-                                            >
-                                              <option value="JMS">JMS</option>
-                                              <option value="GYM-S">
-                                                GYM-S
-                                              </option>
-                                            </select>
-                                            <input
-                                              type="text"
-                                              value={itemIdNumber}
-                                              onChange={(e) => {
-                                                const value = e.target.value;
-                                                if (
-                                                  value === "" ||
-                                                  /^\d{0,3}$/.test(value)
-                                                ) {
-                                                  setItemIdNumber(value);
-                                                  checkItemIdExists(
-                                                    itemIdPrefix,
-                                                    value,
-                                                    itemIdLetter,
-                                                    editOriginalItemNo,
-                                                  );
-                                                }
-                                              }}
-                                              maxLength={3}
-                                              placeholder="000"
-                                              className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm"
-                                            />
-                                            <input
-                                              type="text"
-                                              value={itemIdLetter}
-                                              onChange={(e) => {
-                                                const value = e.target.value
-                                                  .toUpperCase()
-                                                  .slice(0, 1);
-                                                if (
-                                                  value === "" ||
-                                                  /^[A-Z]$/.test(value)
-                                                ) {
-                                                  setItemIdLetter(value);
-                                                  checkItemIdExists(
-                                                    itemIdPrefix,
-                                                    itemIdNumber,
-                                                    value,
-                                                    editOriginalItemNo,
-                                                  );
-                                                }
-                                              }}
-                                              maxLength={1}
-                                              placeholder="A"
-                                              className="w-12 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm uppercase"
-                                            />
-                                            <span className="text-sm text-gray-500 font-mono bg-gray-100 px-3 py-2 rounded-lg">
-                                              →{" "}
-                                              {buildItemNo(
-                                                itemIdPrefix,
-                                                itemIdNumber,
-                                                itemIdLetter,
-                                              )}
-                                            </span>
-                                          </div>
-                                          {itemIdExists && (
-                                            <p className="text-xs text-red-600 mt-1 font-medium">
-                                              ⚠ Item ID{" "}
-                                              {buildItemNo(
-                                                itemIdPrefix,
-                                                itemIdNumber,
-                                                itemIdLetter,
-                                              )}{" "}
-                                              already exists
-                                            </p>
-                                          )}
-                                        </div>
-                                        <div>
-                                          <label className="block text-xs font-medium text-gray-700 mb-1">
-                                            Unit
-                                          </label>
-                                          <select
-                                            value={editingItem.unit_id}
-                                            onChange={(e) =>
-                                              setEditingItem({
-                                                ...editingItem,
-                                                unit_id: e.target.value,
-                                              })
-                                            }
-                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
-                                          >
-                                            {availableUnits
-                                              .filter(
-                                                (unit) =>
-                                                  unit.name.toLowerCase() !==
-                                                  "unit",
-                                              )
-                                              .map((unit) => (
-                                                <option
-                                                  key={unit.pkid}
-                                                  value={unit.pkid}
-                                                >
-                                                  {unit.name}
-                                                </option>
-                                              ))}
-                                          </select>
-                                        </div>
-                                          <div>
-                                            <label className="block text-xs font-medium text-gray-700 mb-1">
-                                              Current Stock
-                                            </label>
-                                            <input
-                                              type="text"
-                                              value={editingItem.remaining_stock}
-                                              onChange={(e) => {
-                                                const value = e.target.value;
-                                                if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
-                                                  const newStock = value === "" ? "" : parseInt(value);
-                                                  
-                                                  // Auto-calculate thresholds based on the adjusted stock
-                                                  const critical = newStock === "" ? "" : Math.ceil(newStock * 0.10);
-                                                  const threshold = newStock === "" ? "" : Math.ceil(newStock * 0.30);
+                          )}
+                        </div>
 
-                                                  setEditingItem({
-                                                    ...editingItem,
-                                                    remaining_stock: newStock,
-                                                    critical_stock: critical,
-                                                    stock_threshold: threshold,
-                                                  });
-                                                }
-                                              }}
-                                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
-                                            />
-                                          </div>                                        
-                                          <div>
-                                          <label className="block text-xs font-medium text-gray-700 mb-1">
-                                            <span className="flex items-center gap-1">
-                                              Critical Stock
-                                              <span title="Automatically calculated as 10% of current stock">
-                                                <Info className="w-3 h-3 text-gray-400" />
-                                              </span>
-                                            </span>
-                                          </label>
-                                          <input
-                                            type="text"
-                                            value={editingItem.critical_stock ?? ""}
-                                            readOnly
-                                            placeholder="0"
-                                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed focus:outline-none"
-                                          />
-                                        </div>                                        <div>
-                                      <label className="block text-xs font-medium text-gray-700 mb-1">
-                                          <span className="flex items-center gap-1">
-                                            Stock Threshold
-                                            <span title="Automatically calculated as 30% of current stock">
-                                              <Info className="w-3 h-3 text-gray-400" />
-                                            </span>
-                                          </span>
-                                        </label>
-                                        <input
-                                          type="text"
-                                          value={editingItem.stock_threshold ?? ""}
-                                          readOnly
-                                          placeholder="0"
-                                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed focus:outline-none"
-                                        />
-                                        </div>                                      
-                                      </div>
-                                      <div className="flex gap-2">
-                                        <button
-                                          onClick={handleEditItem}
-                                          disabled={actionLoading}
-                                          className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 disabled:opacity-50"
-                                        >
-                                          <Save className="w-4 h-4" />
-                                          {actionLoading
-                                            ? "Saving..."
-                                            : "Save Changes"}
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            setEditingItem(null);
-                                            setEditOriginalItemNo("");
-                                            setItemIdExists(false);
-                                          }}
-                                          className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div>
-                                      <div className="flex items-start justify-between mb-3">
-                                        <div>
-                                          <h4 className="font-semibold text-gray-900">
-                                            {item.description}
-                                          </h4>
-                                          <p className="text-sm text-gray-600">
-                                            {item.item_no} • {item.units?.name}
-                                          </p>
-                                        </div>
-                                        <button
-                                          onClick={() => {
-                                            const parsed = parseItemNo(
-                                              item.item_no,
-                                            );
-                                            setItemIdPrefix(parsed.prefix);
-                                            setItemIdNumber(parsed.number);
-                                            setItemIdLetter(parsed.letter);
-                                            setEditOriginalItemNo(item.item_no);
-                                            setItemIdExists(false);
-                                            setEditingItem({
-                                              ...item,
-                                              remaining_stock:
-                                                item.remaining_stock === 0
-                                                  ? ""
-                                                  : item.remaining_stock,
-                                              critical_stock:
-                                                item.critical_stock === 0
-                                                  ? ""
-                                                  : item.critical_stock,
-                                              stock_threshold:
-                                                item.stock_threshold === 0
-                                                  ? ""
-                                                  : item.stock_threshold,
-                                            } as EditableInventoryItem);
-                                          }}
-                                          className="px-3 py-1 bg-[#4A89B0] text-white text-sm rounded-lg hover:bg-[#3776A0] flex items-center gap-1"
-                                        >
-                                          <Edit className="w-4 h-4" /> Edit
-                                        </button>
-                                      </div>
-                                      <div className="grid grid-cols-2 gap-4 mb-3">
-                                        <div>
-                                          <p className="text-xs text-gray-500">
-                                            Current Stock
-                                          </p>
-                                          <p className="text-sm font-semibold">
-                                            {item.remaining_stock}{" "}
-                                            {item.units?.name}
-                                          </p>
-                                        </div>
-                                        <div>
-                                          <p className="text-xs text-gray-500">
-                                            Critical Stock
-                                          </p>
-                                          <p className="text-sm font-semibold">
-                                            {item.critical_stock ?? "—"}{" "}
-                                            {item.units?.name}
-                                          </p>
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-sm text-gray-600">
-                                          Quick Adjust:
-                                        </span>
-                                        {[-10, -1, 1, 10].map((adj) => (
-                                          <button
-                                            key={adj}
-                                            onClick={() =>
-                                              handleAdjustQuantity(item, adj)
-                                            }
-                                            className={`px-3 py-1 text-sm rounded ${adj < 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-green-100 text-green-700 hover:bg-green-200"}`}
-                                          >
-                                            {adj > 0 ? `+${adj}` : adj}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Unit *
+                          </label>
+                          <div className="flex gap-2">
+                            <select
+                              value={newItem.unit_id}
+                              onChange={(e) =>
+                                setNewItem({
+                                  ...newItem,
+                                  unit_id: e.target.value,
+                                })
+                              }
+                              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                            >
+                              <option value="">Select a unit...</option>
+                              {availableUnits
+                                .filter(
+                                  (unit) =>
+                                    unit.name.toLowerCase() !== "unit",
+                                )
+                                .map((unit) => (
+                                  <option key={unit.pkid} value={unit.pkid}>
+                                    {unit.name}
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => setShowAddUnitModal(true)}
+                              className="px-4 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors flex items-center justify-center"
+                              title="Add new unit"
+                            >
+                              <Plus className="w-5 h-5" />
+                            </button>
                           </div>
-                        )}
+                        </div>
+
+                        <div className="md:col-span-2">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Item Name *
+                          </label>
+                          <input
+                            type="text"
+                            value={newItem.description}
+                            onChange={(e) => {
+                              setNewItem({
+                                ...newItem,
+                                description: e.target.value,
+                              });
+                              checkItemNameExists(e.target.value);
+                            }}
+                            placeholder="e.g., Whiteboard Marker"
+                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent ${
+                              itemNameExists
+                                ? "border-red-500 focus:ring-red-500"
+                                : "border-gray-300"
+                            }`}
+                          />
+                          {itemNameExists && (
+                            <p className="text-red-500 text-sm mt-1">
+                              ⚠ An item with this name already exists
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Initial Stock *
+                          </label>
+                          <input
+                            type="text"
+                            value={newItem.remaining_stock}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (
+                                value === "" ||
+                                (/^\d+$/.test(value) && parseInt(value) >= 0)
+                              ) {
+                                const initialStock = value === "" ? 0 : parseInt(value);
+                                const critical = Math.ceil(initialStock * 0.1);
+                                const threshold = Math.ceil(initialStock * 0.3);
+
+                                setNewItem({
+                                  ...newItem,
+                                  remaining_stock: value === "" ? "" : initialStock,
+                                  critical_stock: critical,
+                                  stock_threshold: threshold,
+                                });
+                              }
+                            }}
+                            placeholder="0"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <span className="flex items-center gap-2">
+                              Critical Stock (Emergency Floor) *
+                              <span title="Absolute minimum - items must never go below this level">
+                                <Info className="w-4 h-4 text-gray-400" />
+                              </span>
+                            </span>
+                          </label>
+                          <input
+                            type="text"
+                            value={newItem.critical_stock}
+                            readOnly
+                            placeholder="0"
+                            className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-100 cursor-not-allowed text-gray-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <span className="flex items-center gap-2">
+                              Stock Threshold (Early Warning) *
+                              <span title="Alert threshold - triggers early warning notifications">
+                                <Info className="w-4 h-4 text-gray-400" />
+                              </span>
+                            </span>
+                          </label>
+                          <input
+                            type="text"
+                            value={newItem.stock_threshold}
+                            readOnly
+                            placeholder="0"
+                            className="w-full px-4 py-2 border border-gray-200 rounded-lg bg-gray-100 cursor-not-allowed text-gray-500"
+                          />
+                        </div>
                       </div>
-                    )}
+                    </div>
+                  </div>
 
-                    {/* REMOVE TAB */}
-                    {updateMode === "remove" && (
-                      <div className="p-6 space-y-6">
-                        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                          <p className="text-sm text-red-800">
-                            <strong>Warning:</strong> Removing items permanently
-                            deletes them from your inventory. This cannot be
-                            undone.
+                  <div className="p-6 border-t border-gray-200 flex gap-3">
+                    <button
+                      onClick={() => setShowAddModal(false)}
+                      className="flex-1 px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddItem}
+                      disabled={actionLoading}
+                      className="flex-1 px-6 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <Plus className="w-5 h-5" />
+                      {actionLoading
+                        ? "Adding..."
+                        : "Add Item to Inventory"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Edit Item Modal */}
+            {showEditModal && editingItem && (
+              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full">
+                  <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                    <h3 className="text-xl font-bold text-gray-900">
+                      Edit Item: {editingItem.description}
+                    </h3>
+                    <button
+                      onClick={() => {
+                        setShowEditModal(false);
+                        setEditingItem(null);
+                        setEditOriginalItemNo("");
+                      }}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+
+                  <div className="p-6 space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Item ID *
+                        </label>
+                        <div className="flex gap-2 items-center">
+                          <select
+                            value={itemIdPrefix}
+                            onChange={(e) => {
+                              const newPrefix = e.target.value as "JMS" | "GYM-S";
+                              setItemIdPrefix(newPrefix);
+                              checkItemIdExists(
+                                newPrefix,
+                                itemIdNumber,
+                                itemIdLetter,
+                                editOriginalItemNo,
+                              );
+                            }}
+                            className="px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] font-semibold text-gray-900 cursor-pointer transition-colors hover:border-gray-400"
+                          >
+                            <option value="JMS">JMS</option>
+                            <option value="GYM-S">GYM-S</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={itemIdNumber}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (value === "" || /^\d{0,3}$/.test(value)) {
+                                setItemIdNumber(value);
+                                checkItemIdExists(
+                                  itemIdPrefix,
+                                  value,
+                                  itemIdLetter,
+                                  editOriginalItemNo,
+                                );
+                              }
+                            }}
+                            maxLength={3}
+                            placeholder="000"
+                            className="w-20 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm"
+                          />
+                          <input
+                            type="text"
+                            value={itemIdLetter}
+                            onChange={(e) => {
+                              const value = e.target.value
+                                .toUpperCase()
+                                .slice(0, 1);
+                              if (value === "" || /^[A-Z]$/.test(value)) {
+                                setItemIdLetter(value);
+                                checkItemIdExists(
+                                  itemIdPrefix,
+                                  itemIdNumber,
+                                  value,
+                                  editOriginalItemNo,
+                                );
+                              }
+                            }}
+                            maxLength={1}
+                            placeholder="A"
+                            className="w-12 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm uppercase"
+                          />
+                          <span className="text-sm text-gray-500 font-mono bg-gray-100 px-3 py-1.5 rounded-lg">
+                            → {buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter)}
+                          </span>
+                        </div>
+                        {itemIdExists && (
+                          <p className="text-xs text-red-600 mt-1 font-medium">
+                            ⚠ Item ID {buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter)} already exists
                           </p>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Search by Item No
-                            </label>
-                            <input
-                              type="text"
-                              value={removeSearchItemNo}
-                              onChange={(e) =>
-                                setRemoveSearchItemNo(e.target.value)
-                              }
-                              placeholder="e.g., JMS010"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Search by Description
-                            </label>
-                            <input
-                              type="text"
-                              value={removeSearchDescription}
-                              onChange={(e) =>
-                                setRemoveSearchDescription(e.target.value)
-                              }
-                              placeholder="e.g., Air Freshener"
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
-                            />
-                          </div>
-                        </div>
-                        {inventory.length === 0 ? (
-                          <div className="p-12 text-center">
-                            <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                            <p className="text-gray-600">No items to remove</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {inventory
-                              .filter(
-                                (item) =>
-                                  (removeSearchItemNo === "" ||
-                                    item.item_no
-                                      .toLowerCase()
-                                      .includes(
-                                        removeSearchItemNo.toLowerCase(),
-                                      )) &&
-                                  (removeSearchDescription === "" ||
-                                    item.description
-                                      .toLowerCase()
-                                      .includes(
-                                        removeSearchDescription.toLowerCase(),
-                                      )),
-                              )
-                              .map((item) => (
-                                <div
-                                  key={item.item_no}
-                                  className="border border-gray-200 rounded-lg p-4 hover:border-red-300 transition-colors flex items-center justify-between"
-                                >
-                                  <div>
-                                    <h4 className="font-semibold text-gray-900">
-                                      {item.description}
-                                    </h4>
-                                    <p className="text-xs text-gray-500 font-mono mb-1">
-                                      {item.item_no}
-                                    </p>
-                                    <p className="text-sm text-gray-600">
-                                      {item.units?.name} •{" "}
-                                      {item.remaining_stock} in stock
-                                    </p>
-                                  </div>
-                                  <button
-                                    onClick={() => requestRemoveItem(item)}
-                                    disabled={actionLoading}
-                                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
-                                  >
-                                    <Trash2 className="w-4 h-4" /> Remove
-                                  </button>
-                                </div>
-                              ))}
-                          </div>
                         )}
                       </div>
-                    )}
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Unit
+                        </label>
+                        <select
+                          value={editingItem.unit_id}
+                          onChange={(e) =>
+                            setEditingItem({
+                              ...editingItem,
+                              unit_id: e.target.value,
+                            })
+                          }
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
+                        >
+                          {availableUnits
+                            .filter(
+                              (unit) =>
+                                unit.name.toLowerCase() !==
+                                "unit",
+                            )
+                            .map((unit) => (
+                              <option
+                                key={unit.pkid}
+                                value={unit.pkid}
+                              >
+                                {unit.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Current Stock
+                        </label>
+                        <input
+                          type="text"
+                          value={editingItem.remaining_stock}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
+                              const newStock = value === "" ? "" : parseInt(value);
+                              
+                              // Auto-calculate thresholds based on the adjusted stock
+                              const critical = newStock === "" ? "" : Math.ceil(newStock * 0.10);
+                              const threshold = newStock === "" ? "" : Math.ceil(newStock * 0.30);
+
+                              setEditingItem({
+                                ...editingItem,
+                                remaining_stock: newStock,
+                                critical_stock: critical,
+                                stock_threshold: threshold,
+                              });
+                            }
+                          }}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <span className="flex items-center gap-1">
+                            Critical Stock
+                            <span title="Automatically calculated as 10% of current stock">
+                              <Info className="w-3 h-3 text-gray-400" />
+                            </span>
+                          </span>
+                        </label>
+                        <input
+                          type="text"
+                          value={editingItem.critical_stock ?? ""}
+                          readOnly
+                          placeholder="0"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          <span className="flex items-center gap-1">
+                            Stock Threshold
+                            <span title="Automatically calculated as 30% of current stock">
+                              <Info className="w-3 h-3 text-gray-400" />
+                            </span>
+                          </span>
+                        </label>
+                        <input
+                          type="text"
+                          value={editingItem.stock_threshold ?? ""}
+                          readOnly
+                          placeholder="0"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 border-t border-gray-200 flex gap-3">
+                    <button
+                      onClick={() => {
+                        if (editingItem) {
+                          setDeleteTarget({
+                            ...editingItem,
+                            remaining_stock: typeof editingItem.remaining_stock === "string" 
+                              ? parseInt(editingItem.remaining_stock) || 0 
+                              : editingItem.remaining_stock,
+                            critical_stock: typeof editingItem.critical_stock === "string"
+                              ? parseInt(editingItem.critical_stock) || 0
+                              : editingItem.critical_stock,
+                            stock_threshold: typeof editingItem.stock_threshold === "string"
+                              ? parseInt(editingItem.stock_threshold) || 0
+                              : editingItem.stock_threshold,
+                          } as InventoryItem);
+                          setShowDeleteModal(true);
+                          setShowEditModal(false);
+                        }
+                      }}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowEditModal(false);
+                        setEditingItem(null);
+                        setEditOriginalItemNo("");
+                      }}
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleEditItem}
+                      disabled={actionLoading}
+                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <Save className="w-4 h-4" />
+                      {actionLoading ? "Saving..." : "Save Changes"}
+                    </button>
                   </div>
                 </div>
               </div>
