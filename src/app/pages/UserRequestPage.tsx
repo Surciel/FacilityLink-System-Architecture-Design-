@@ -38,7 +38,7 @@ export function UserRequestPage() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
-  const debounceTimersRef = useRef<Record<string, number>>({});
+  const debounceTimersRef = useRef<Record<string, NodeJS.Timeout>>({});
 
   // Cleanup debounce timers on component unmount
   useEffect(() => {
@@ -492,11 +492,15 @@ export function UserRequestPage() {
     setSubmitting(true);
 
     try {
-      const department = personalInfo.userType === "faculty" ? personalInfo.department : personalInfo.college;
-      const facilityPrefix = personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+      const department =
+        personalInfo.userType === "faculty"
+          ? personalInfo.department
+          : personalInfo.college;
+      const facilityPrefix =
+        personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
 
       // 1. MEMORY OPTIMIZATION: Fetch all required inventory items in a SINGLE query.
-      const itemIds = items.map(item => item.id);
+      const itemIds = items.map((item) => item.id);
       const { data: inventoryItems, error: fetchError } = await supabase
         .from("inventory")
         .select("item_no, description, unit_id, units(name), remaining_stock")
@@ -512,11 +516,12 @@ export function UserRequestPage() {
       // 2. Validate items locally using the fetched array
       const validatedItems = [];
       for (const item of items) {
-        const invItem = inventoryItems.find(i => i.item_no === item.id);
-        
+        const invItem = inventoryItems.find((i) => i.item_no === item.id);
+
         if (!invItem) {
           toast.error(`Item ID "${item.id}" not found or not available.`);
-          setSubmitting(false); return;
+          setSubmitting(false);
+          return;
         }
         validatedItems.push({
           ...item,
@@ -525,7 +530,9 @@ export function UserRequestPage() {
       }
 
       const requestGroupId = crypto.randomUUID();
-      const phTime = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }));
+      const phTime = new Date(
+        new Date().toLocaleString("en-US", { timeZone: "Asia/Manila" }),
+      );
 
       // 3. Insert into requests table WITH 'pending' status
       const requestsToInsert = validatedItems.map((item) => ({
@@ -533,18 +540,24 @@ export function UserRequestPage() {
         quantity_requested: item.quantity,
         requested_by: personalInfo.fullName,
         requester_type: personalInfo.userType,
-        requester_info: personalInfo.userType === "student" ? personalInfo.studentNumber : personalInfo.facultyId,
+        requester_info:
+          personalInfo.userType === "student"
+            ? personalInfo.studentNumber
+            : personalInfo.facultyId,
         department: department,
         request_group_id: requestGroupId,
         created_at: phTime.toISOString(),
-        status: "pending" 
+        status: "pending",
       }));
 
-      const { error: requestsInsertError } = await supabase.from("requests").insert(requestsToInsert);
+      const { error: requestsInsertError } = await supabase
+        .from("requests")
+        .insert(requestsToInsert);
 
       if (requestsInsertError) {
         toast.error("Failed to submit request.");
-        setSubmitting(false); return;
+        setSubmitting(false);
+        return;
       }
 
       toast.success("Request submitted and is pending review!");
@@ -555,7 +568,7 @@ export function UserRequestPage() {
       setSubmitting(false);
     }
   };
-  
+
   const handleNextStep = () => {
     if (currentStep === 1 && validateStep1()) {
       setCurrentStep(2);
@@ -1048,7 +1061,12 @@ export function UserRequestPage() {
                                       <button
                                         key={invItem.item_no}
                                         type="button"
-                                        onClick={() => selectFromDropdown(index, invItem.item_no)}
+                                        onClick={() =>
+                                          selectFromDropdown(
+                                            index,
+                                            invItem.item_no,
+                                          )
+                                        }
                                         disabled={invItem.remaining_stock <= 0}
                                         className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center justify-between ${
                                           invItem.remaining_stock <= 0
@@ -1057,16 +1075,20 @@ export function UserRequestPage() {
                                         }`}
                                       >
                                         <span className="truncate pr-4">
-                                          <span className="font-semibold text-gray-700 mr-2">{invItem.item_no}</span> 
+                                          <span className="font-semibold text-gray-700 mr-2">
+                                            {invItem.item_no}
+                                          </span>
                                           {invItem.description}
                                         </span>
-                                        <span className={`flex-shrink-0 text-xs px-2 py-1 rounded font-medium ${
-                                          invItem.remaining_stock <= 0 
-                                            ? "bg-red-100 text-red-700" 
-                                            : "bg-green-100 text-green-700"
-                                        }`}>
-                                          {invItem.remaining_stock <= 0 
-                                            ? "Out of stock" 
+                                        <span
+                                          className={`flex-shrink-0 text-xs px-2 py-1 rounded font-medium ${
+                                            invItem.remaining_stock <= 0
+                                              ? "bg-red-100 text-red-700"
+                                              : "bg-green-100 text-green-700"
+                                          }`}
+                                        >
+                                          {invItem.remaining_stock <= 0
+                                            ? "Out of stock"
                                             : `${invItem.remaining_stock} left`}
                                         </span>
                                       </button>
@@ -1161,7 +1183,12 @@ export function UserRequestPage() {
                                       <button
                                         key={invItem.item_no}
                                         type="button"
-                                        onClick={() => selectFromDropdown(index, invItem.item_no)}
+                                        onClick={() =>
+                                          selectFromDropdown(
+                                            index,
+                                            invItem.item_no,
+                                          )
+                                        }
                                         disabled={invItem.remaining_stock <= 0}
                                         className={`w-full text-left px-4 py-2 text-sm transition-colors flex items-center justify-between ${
                                           invItem.remaining_stock <= 0
@@ -1171,15 +1198,19 @@ export function UserRequestPage() {
                                       >
                                         <span className="truncate pr-4">
                                           {invItem.description}
-                                          <span className="text-gray-500 ml-2 font-mono text-xs">({invItem.item_no})</span>
+                                          <span className="text-gray-500 ml-2 font-mono text-xs">
+                                            ({invItem.item_no})
+                                          </span>
                                         </span>
-                                        <span className={`flex-shrink-0 text-xs px-2 py-1 rounded font-medium ${
-                                          invItem.remaining_stock <= 0 
-                                            ? "bg-red-100 text-red-700" 
-                                            : "bg-green-100 text-green-700"
-                                        }`}>
-                                          {invItem.remaining_stock <= 0 
-                                            ? "Out of stock" 
+                                        <span
+                                          className={`flex-shrink-0 text-xs px-2 py-1 rounded font-medium ${
+                                            invItem.remaining_stock <= 0
+                                              ? "bg-red-100 text-red-700"
+                                              : "bg-green-100 text-green-700"
+                                          }`}
+                                        >
+                                          {invItem.remaining_stock <= 0
+                                            ? "Out of stock"
                                             : `${invItem.remaining_stock} left`}
                                         </span>
                                       </button>

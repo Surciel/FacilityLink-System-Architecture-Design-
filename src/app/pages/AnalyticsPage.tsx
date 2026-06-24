@@ -25,7 +25,6 @@ import {
   PolarAngleAxis,
 } from "recharts";
 import {
-  buildForecast,
   computeInventoryStats,
   buildProcurementRows,
 } from "../../lib/forecastUtils";
@@ -105,145 +104,6 @@ const ForecastTooltip = ({ active, payload, label }: any) => {
         </div>
       ))}
     </div>
-  );
-};
-
-// ── DSS Forecast Chart ───────────────────────────────────────────────────────
-const DSS_ForecastChart = ({
-  monthlyTrendData,
-  consumForecast,
-  borrowForecast,
-}: {
-  monthlyTrendData: any[];
-  consumForecast: any;
-  borrowForecast: any;
-}) => {
-  const shortMonths = [
-    "Jan","Feb","Mar","Apr","May","Jun",
-    "Jul","Aug","Sep","Oct","Nov","Dec",
-  ];
-  const now = new Date();
-
-  // Build 3-month forecast labels (future months only)
-  const forecastMonths = Array.from({ length: 3 }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() + i + 1, 1);
-    return shortMonths[d.getMonth()] + " (pred)";
-  });
-
-  // Take last 6 historical months as actuals
-  const historicalSlice = monthlyTrendData.slice(-6).map((d) => ({
-    month: d.month,          // keeps original label e.g. "May (Current)"
-    consumables: d.consumables,
-    borrowables: d.borrowables,
-    consumablesForecast: null,
-    borrowablesForecast: null,
-    isForecast: false,
-  }));
-
-  // The last actual point — used as the bridge INTO forecast lines
-  const lastActual = historicalSlice[historicalSlice.length - 1];
-
-  // Forecast extension points (pure future, no actual values)
-  const forecastPoints = forecastMonths.map((m, i) => ({
-    month: m,
-    consumables: null,
-    borrowables: null,
-    consumablesForecast: consumForecast?.bestPredicted?.[i] ?? null,
-    borrowablesForecast: borrowForecast?.bestPredicted?.[i] ?? null,
-    isForecast: true,
-  }));
-
-  // Bridge: keep the last historical label but also carry forecast values
-  // so the dashed lines start FROM the last real data point visually.
-  const bridgePoint = {
-    ...lastActual,
-    consumablesForecast: consumForecast?.bestPredicted?.[0] ?? null,
-    borrowablesForecast: borrowForecast?.bestPredicted?.[0] ?? null,
-  };
-
-  // Replace the last item in historicalSlice with the bridge version,
-  // then append pure forecast points (skip index 0 since bridge covers it).
-  const combined = [
-    ...historicalSlice.slice(0, -1),
-    bridgePoint,
-    ...forecastPoints,
-  ];
-
-  return (
-    <ResponsiveContainer width="100%" height={220}>
-      <ComposedChart
-        data={combined}
-        margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
-      >
-        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-        <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-        <YAxis tick={{ fontSize: 10 }} />
-        <Tooltip content={<ForecastTooltip />} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
-        {/* Reference line sits between last actual and first forecast month */}
-        <ReferenceLine
-          x={forecastMonths[0]}
-          stroke="#a855f7"
-          strokeDasharray="4 4"
-          label={{
-            value: "Forecast →",
-            position: "top",
-            fontSize: 10,
-            fill: "#a855f7",
-          }}
-        />
-        <Area
-          type="monotone"
-          dataKey="consumables"
-          stroke="#10b981"
-          fill="url(#consumGrad)"
-          strokeWidth={2}
-          name="Consumables (actual)"
-          dot={false}
-          connectNulls={false}
-        />
-        <Area
-          type="monotone"
-          dataKey="borrowables"
-          stroke="#a855f7"
-          fill="url(#borrowGrad)"
-          strokeWidth={2}
-          name="Borrowables (actual)"
-          dot={false}
-          connectNulls={false}
-        />
-        <Line
-          type="monotone"
-          dataKey="consumablesForecast"
-          stroke="#10b981"
-          strokeWidth={2}
-          strokeDasharray="6 3"
-          dot={{ r: 4, fill: "#10b981" }}
-          name="Consumables (forecast)"
-          connectNulls={false}
-        />
-        <Line
-          type="monotone"
-          dataKey="borrowablesForecast"
-          stroke="#a855f7"
-          strokeWidth={2}
-          strokeDasharray="6 3"
-          dot={{ r: 4, fill: "#a855f7" }}
-          name="Borrowables (forecast)"
-          connectNulls={false}
-        />
-        <defs>
-          <linearGradient id="consumGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#10b981" stopOpacity={0.2} />
-            <stop offset="100%" stopColor="#10b981" stopOpacity={0.01} />
-          </linearGradient>
-          <linearGradient id="borrowGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#a855f7" stopOpacity={0.2} />
-            <stop offset="100%" stopColor="#a855f7" stopOpacity={0.01} />
-          </linearGradient>
-        </defs>
-      </ComposedChart>
-    </ResponsiveContainer>
   );
 };
 
@@ -406,7 +266,6 @@ export function AnalyticsPage() {
   const [trendFilter, setTrendFilter] = useState<
     "all" | "consumable" | "borrowable"
   >("all");
-  const [showTrendAnalysis, setShowTrendAnalysis] = useState(false);
   const [topRequestedItems, setTopRequestedItems] = useState<any[]>([]);
   const [departmentActivity, setDepartmentActivity] = useState<any[]>([]);
   const [departmentFilter, setDepartmentFilter] = useState<
@@ -421,16 +280,12 @@ export function AnalyticsPage() {
   const [procurementTotalPages, setProcurementTotalPages] = useState(1);
   const [allRequestedItems, setAllRequestedItems] = useState<any[]>([]);
 
-  const [consumForecast, setConsumForecast] = useState<any>(null);
-  const [borrowForecast, setBorrowForecast] = useState<any>(null);
   const [inventoryStats, setInventoryStats] = useState<any>(null);
-  const [groqInsight, setGroqInsight] = useState("");
-  const [groqLoading, setGroqLoading] = useState(false);
 
   // DSS chart tab state
-  const [dssChartTab, setDssChartTab] = useState<
-    "forecast" | "burnrate" | "risk"
-  >("forecast");
+  const [dssChartTab, setDssChartTab] = useState<"burnrate" | "risk">(
+    "burnrate",
+  );
   const [dssChartsExpanded, setDssChartsExpanded] = useState(true);
   const [totalOutOfStock, setTotalOutOfStock] = useState(0);
 
@@ -606,12 +461,6 @@ export function AnalyticsPage() {
   }, [velocityPage]);
 
   useEffect(() => {
-    if (showTrendAnalysis && monthlyTrendData.length === 0) {
-      fetchMonthlyTrend();
-    }
-  }, [showTrendAnalysis]);
-
-  useEffect(() => {
     // Update procurement table data when page changes
     if (allRequestedItems.length > 0) {
       const start = (procurementPage - 1) * 10;
@@ -735,11 +584,6 @@ export function AnalyticsPage() {
       }));
 
     setMonthlyTrendData(trendData);
-
-    const consumSeries = trendData.map((d: any) => d.consumables);
-    const borrowSeries = trendData.map((d: any) => d.borrowables);
-    setConsumForecast(buildForecast(consumSeries, 3));
-    setBorrowForecast(buildForecast(borrowSeries, 3));
   };
 
   const fetchTopRequestedItems = async () => {
@@ -846,15 +690,15 @@ export function AnalyticsPage() {
   };
 
   const fetchSummaryStats = async () => {
-  const { data } = await supabase
-    .from("inventory")
-    .select("remaining_stock, critical_stock");
-  const outOfStockCount = (data || []).filter(
-    (item) => item.remaining_stock <= 0,
-  ).length;
-  setItemsNeedRestock(outOfStockCount);
-  setTotalOutOfStock(outOfStockCount); // ← add this
-};
+    const { data } = await supabase
+      .from("inventory")
+      .select("remaining_stock, critical_stock");
+    const outOfStockCount = (data || []).filter(
+      (item) => item.remaining_stock <= 0,
+    ).length;
+    setItemsNeedRestock(outOfStockCount);
+    setTotalOutOfStock(outOfStockCount); // ← add this
+  };
 
   const fetchAvailableMonths = async () => {
     const { data } = await supabase
@@ -886,181 +730,193 @@ export function AnalyticsPage() {
   };
 
   const fetchCategorizedAssetAnalytics = async () => {
-  try {
-    const { data: inventoryData } = await supabase
-      .from("inventory")
-      .select("item_no, description, remaining_stock, item_type");
- 
-    // Step 1: get last 3 period labels
-    const { data: recentLabels } = await supabase
-      .from("inventory_history")
-      .select("period_label")
-      .order("snapshot_date", { ascending: false })
-      .limit(3);
- 
-    const labels = [
-      ...new Set(recentLabels?.map((r) => r.period_label) || []),
-    ];
- 
-    // Step 2: fetch history if available
-    const { data: historyData } = labels.length > 0
-      ? await supabase
-          .from("inventory_history")
-          .select("item_no, total_qty_issued, item_type, week1, week2, week3, week4")
-          .in("period_label", labels)
-      : { data: [] };
- 
-    // Step 3: current month requests as fallback
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
- 
-    const { data: currentRequests } = await supabase
-      .from("requests")
-      .select("item_no, quantity_requested")
-      .gte("created_at", monthStart.toISOString())
-      .lte("created_at", monthEnd.toISOString());
- 
-    const currentMonthByItem: Record<string, number> = {};
-    (currentRequests || []).forEach((req) => {
-      currentMonthByItem[req.item_no] =
-        (currentMonthByItem[req.item_no] || 0) +
-        (Number(req.quantity_requested) || 0);
-    });
- 
-    const burnRateMap: Record<string, any> = {};
-    const utilizationMap: Record<string, any> = {};
- 
-    (inventoryData || []).forEach((item) => {
-      const itemType = item.item_type || "consumable";
- 
-      if (itemType === "consumable") {
-        const itemHistory = (historyData || []).filter(
-          (h) => h.item_no === item.item_no,
-        );
-        const monthsWithData = itemHistory.filter(
-          (h) => (h.total_qty_issued || 0) > 0,
-        );
- 
-        let avgMonthlyUsage = 0;
- 
-        if (monthsWithData.length > 0) {
-          avgMonthlyUsage =
-            monthsWithData.reduce(
-              (sum, h) => sum + (h.total_qty_issued || 0),
-              0,
-            ) / monthsWithData.length;
-        } else if (currentMonthByItem[item.item_no]) {
-          avgMonthlyUsage = currentMonthByItem[item.item_no];
-        }
- 
-        const weeklyBurnRate = parseFloat((avgMonthlyUsage / 4.33).toFixed(2));
- 
-        // KEY FIX: weeks until stockout
-        // - 0 stock → 0 weeks (order immediately), regardless of burn rate
-        // - has stock + burn rate → normal calculation
-        // - has stock, no burn data → Infinity (unknown, not critical)
-        const weeksUntilStockout =
-          item.remaining_stock <= 0
-            ? 0
-            : weeklyBurnRate > 0
-            ? Math.ceil(item.remaining_stock / weeklyBurnRate)
-            : Infinity;
- 
-        burnRateMap[item.item_no] = {
-          description: item.description,
-          monthlyUsage: parseFloat(avgMonthlyUsage.toFixed(1)),
-          weeklyBurnRate,
-          currentStock: item.remaining_stock,
-          weeksUntilStockout,
-          recommendation:
-            item.remaining_stock <= 0
-              ? "Out of stock — reorder immediately"
-              : weeklyBurnRate > 0
-              ? `Reorder in ${Math.ceil(item.remaining_stock / weeklyBurnRate)} weeks`
-              : "No usage data — monitor",
-        };
-      } else {
-        // Borrowable
-        const itemHistory = (historyData || []).filter(
-          (h) => h.item_no === item.item_no,
-        );
- 
-        let avgMonthlyRequests = 0;
- 
-        if (itemHistory.length > 0) {
-          avgMonthlyRequests =
-            itemHistory.reduce(
-              (sum, h) =>
-                sum +
-                ((h.week1 || 0) + (h.week2 || 0) + (h.week3 || 0) + (h.week4 || 0)),
-              0,
-            ) / itemHistory.length;
-        } else if (currentMonthByItem[item.item_no]) {
-          avgMonthlyRequests = currentMonthByItem[item.item_no];
-        }
- 
-        const utilizationPercentage = parseFloat(
-          ((avgMonthlyRequests / 30) * 100).toFixed(1),
-        );
- 
-        utilizationMap[item.item_no] = {
-          description: item.description,
-          totalRequests: parseFloat(avgMonthlyRequests.toFixed(1)),
-          utilizationPercentage,
-          currentStock: item.remaining_stock,
-          recommendation:
-            utilizationPercentage < 5
-              ? "Low utilization - consider not restocking"
-              : utilizationPercentage > 20
-              ? "High utilization - monitor availability"
-              : "Healthy utilization rate",
-        };
-      }
-    });
- 
-    // ── FIXED SORTING: zero-stock items always included ───────────────────────
-    const allBurnRates = Object.values(burnRateMap) as any[];
- 
-    // Filter to only items that have been requested (have usage history or current month requests)
-    const requestedItems = allBurnRates.filter(
-  (i) => i.currentStock <= 0 || i.weeklyBurnRate > 0 || i.monthlyUsage > 0
-);
-    
-    // Sort: out-of-stock items first, then by weekly burn rate (highest first)
-    const sortedByPriority = requestedItems.sort((a, b) => {
-  if (a.currentStock <= 0 && b.currentStock > 0) return -1;
-  if (a.currentStock > 0 && b.currentStock <= 0) return 1;
-  return b.weeklyBurnRate - a.weeklyBurnRate;
-});
-    setAllRequestedItems(sortedByPriority);
-setProcurementTotalPages(Math.ceil(sortedByPriority.length / 10));
-setProcurementPage(1);
+    try {
+      const { data: inventoryData } = await supabase
+        .from("inventory")
+        .select("item_no, description, remaining_stock, item_type");
 
-// Set first page immediately
-setConsumableBurnRate(sortedByPriority.slice(0, 10));
-    
-    // Get current page data
-    const start = 0;
-    const end = 10;
-    const currentPageData = sortedByPriority.slice(start, end);
-    setConsumableBurnRate(currentPageData);
- 
-    // Borrowable utilization — top 5 by utilization rate (unchanged)
-    setBorrowableUtilization(
-      Object.values(utilizationMap)
-        .sort((a: any, b: any) => b.utilizationPercentage - a.utilizationPercentage)
-        .slice(0, 5),
-    );
- 
-    // Stats for DSS cards
-    const burnRateValues = allBurnRates.map((i: any) => i.weeklyBurnRate);
-    const stockValues = allBurnRates.map((i: any) => i.currentStock);
-    setInventoryStats(computeInventoryStats(burnRateValues, stockValues));
-  } catch (error) {
-    console.error("Error fetching categorized asset analytics:", error);
-  }
-};
+      // Step 1: get last 3 period labels
+      const { data: recentLabels } = await supabase
+        .from("inventory_history")
+        .select("period_label")
+        .order("snapshot_date", { ascending: false })
+        .limit(3);
+
+      const labels = [
+        ...new Set(recentLabels?.map((r) => r.period_label) || []),
+      ];
+
+      // Step 2: fetch history if available
+      const { data: historyData } =
+        labels.length > 0
+          ? await supabase
+              .from("inventory_history")
+              .select(
+                "item_no, total_qty_issued, item_type, week1, week2, week3, week4",
+              )
+              .in("period_label", labels)
+          : { data: [] };
+
+      // Step 3: current month requests as fallback
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+      const { data: currentRequests } = await supabase
+        .from("requests")
+        .select("item_no, quantity_requested")
+        .gte("created_at", monthStart.toISOString())
+        .lte("created_at", monthEnd.toISOString());
+
+      const currentMonthByItem: Record<string, number> = {};
+      (currentRequests || []).forEach((req) => {
+        currentMonthByItem[req.item_no] =
+          (currentMonthByItem[req.item_no] || 0) +
+          (Number(req.quantity_requested) || 0);
+      });
+
+      const burnRateMap: Record<string, any> = {};
+      const utilizationMap: Record<string, any> = {};
+
+      (inventoryData || []).forEach((item) => {
+        const itemType = item.item_type || "consumable";
+
+        if (itemType === "consumable") {
+          const itemHistory = (historyData || []).filter(
+            (h) => h.item_no === item.item_no,
+          );
+          const monthsWithData = itemHistory.filter(
+            (h) => (h.total_qty_issued || 0) > 0,
+          );
+
+          let avgMonthlyUsage = 0;
+
+          if (monthsWithData.length > 0) {
+            avgMonthlyUsage =
+              monthsWithData.reduce(
+                (sum, h) => sum + (h.total_qty_issued || 0),
+                0,
+              ) / monthsWithData.length;
+          } else if (currentMonthByItem[item.item_no]) {
+            avgMonthlyUsage = currentMonthByItem[item.item_no];
+          }
+
+          const weeklyBurnRate = parseFloat(
+            (avgMonthlyUsage / 4.33).toFixed(2),
+          );
+
+          // KEY FIX: weeks until stockout
+          // - 0 stock → 0 weeks (order immediately), regardless of burn rate
+          // - has stock + burn rate → normal calculation
+          // - has stock, no burn data → Infinity (unknown, not critical)
+          const weeksUntilStockout =
+            item.remaining_stock <= 0
+              ? 0
+              : weeklyBurnRate > 0
+                ? Math.ceil(item.remaining_stock / weeklyBurnRate)
+                : Infinity;
+
+          burnRateMap[item.item_no] = {
+            description: item.description,
+            monthlyUsage: parseFloat(avgMonthlyUsage.toFixed(1)),
+            weeklyBurnRate,
+            currentStock: item.remaining_stock,
+            weeksUntilStockout,
+            recommendation:
+              item.remaining_stock <= 0
+                ? "Out of stock — reorder immediately"
+                : weeklyBurnRate > 0
+                  ? `Reorder in ${Math.ceil(item.remaining_stock / weeklyBurnRate)} weeks`
+                  : "No usage data — monitor",
+          };
+        } else {
+          // Borrowable
+          const itemHistory = (historyData || []).filter(
+            (h) => h.item_no === item.item_no,
+          );
+
+          let avgMonthlyRequests = 0;
+
+          if (itemHistory.length > 0) {
+            avgMonthlyRequests =
+              itemHistory.reduce(
+                (sum, h) =>
+                  sum +
+                  ((h.week1 || 0) +
+                    (h.week2 || 0) +
+                    (h.week3 || 0) +
+                    (h.week4 || 0)),
+                0,
+              ) / itemHistory.length;
+          } else if (currentMonthByItem[item.item_no]) {
+            avgMonthlyRequests = currentMonthByItem[item.item_no];
+          }
+
+          const utilizationPercentage = parseFloat(
+            ((avgMonthlyRequests / 30) * 100).toFixed(1),
+          );
+
+          utilizationMap[item.item_no] = {
+            description: item.description,
+            totalRequests: parseFloat(avgMonthlyRequests.toFixed(1)),
+            utilizationPercentage,
+            currentStock: item.remaining_stock,
+            recommendation:
+              utilizationPercentage < 5
+                ? "Low utilization - consider not restocking"
+                : utilizationPercentage > 20
+                  ? "High utilization - monitor availability"
+                  : "Healthy utilization rate",
+          };
+        }
+      });
+
+      // ── FIXED SORTING: zero-stock items always included ───────────────────────
+      const allBurnRates = Object.values(burnRateMap) as any[];
+
+      // Filter to only items that have been requested (have usage history or current month requests)
+      const requestedItems = allBurnRates.filter(
+        (i) =>
+          i.currentStock <= 0 || i.weeklyBurnRate > 0 || i.monthlyUsage > 0,
+      );
+
+      // Sort: out-of-stock items first, then by weekly burn rate (highest first)
+      const sortedByPriority = requestedItems.sort((a, b) => {
+        if (a.currentStock <= 0 && b.currentStock > 0) return -1;
+        if (a.currentStock > 0 && b.currentStock <= 0) return 1;
+        return b.weeklyBurnRate - a.weeklyBurnRate;
+      });
+      setAllRequestedItems(sortedByPriority);
+      setProcurementTotalPages(Math.ceil(sortedByPriority.length / 10));
+      setProcurementPage(1);
+
+      // Set first page immediately
+      setConsumableBurnRate(sortedByPriority.slice(0, 10));
+
+      // Get current page data
+      const start = 0;
+      const end = 10;
+      const currentPageData = sortedByPriority.slice(start, end);
+      setConsumableBurnRate(currentPageData);
+
+      // Borrowable utilization — top 5 by utilization rate (unchanged)
+      setBorrowableUtilization(
+        Object.values(utilizationMap)
+          .sort(
+            (a: any, b: any) =>
+              b.utilizationPercentage - a.utilizationPercentage,
+          )
+          .slice(0, 5),
+      );
+
+      // Stats for DSS cards
+      const burnRateValues = allBurnRates.map((i: any) => i.weeklyBurnRate);
+      const stockValues = allBurnRates.map((i: any) => i.currentStock);
+      setInventoryStats(computeInventoryStats(burnRateValues, stockValues));
+    } catch (error) {
+      console.error("Error fetching categorized asset analytics:", error);
+    }
+  };
 
   const fetchVelocityDataWithFilters = async (
     category: "all" | "consumable" | "borrowable" = "all",
@@ -1220,528 +1076,632 @@ setConsumableBurnRate(sortedByPriority.slice(0, 10));
 
   // ── PRINT PROCUREMENT SUMMARY PDF ────────────────────────────────────────
   const printProcurementSummary = () => {
-  setGenerating("Procurement");
-  try {
-    const doc = new jsPDF("landscape");
-    const pageWidth = doc.internal.pageSize.width;
-    const pageHeight = doc.internal.pageSize.height;
-    const now = new Date();
-    const monthName = fullMonths[now.getMonth()];
-    const year = now.getFullYear();
-    const margin = 14;
-    const contentWidth = pageWidth - margin * 2;
- 
-    // ── HEADER BAND ───────────────────────────────────────────────────
-    doc.setFillColor(74, 137, 176);
-    doc.rect(0, 0, pageWidth, 32, "F");
- 
-    doc.setFillColor(47, 100, 136);
-    doc.rect(0, 29, pageWidth, 3, "F");
- 
-    doc.setFont("times", "bold");
-    doc.setFontSize(17);
-    doc.setTextColor(255, 255, 255);
-    doc.text("PROCUREMENT DECISION SUMMARY", pageWidth / 2, 11, { align: "center" });
- 
-    doc.setFont("times", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(210, 235, 255);
-    doc.text(
-      "Pamantasan ng Lungsod ng Maynila  ·  General Services Office",
-      pageWidth / 2, 18, { align: "center" }
-    );
-    doc.text(`Reporting Period: ${monthName} ${year}`, pageWidth / 2, 25, { align: "center" });
- 
-    doc.setFontSize(7.5);
-    doc.setTextColor(180, 215, 245);
-    doc.text(
-      `Ref. No. GSO-${year}-${String(now.getMonth() + 1).padStart(2, "0")}-PROC`,
-      margin, 27
-    );
-    doc.text(
-      `Generated: ${now.toLocaleDateString("en-PH", {
-        year: "numeric", month: "long", day: "numeric",
-        hour: "2-digit", minute: "2-digit",
-      })}`,
-      pageWidth - margin, 27, { align: "right" }
-    );
- 
-    // ── KPI CARDS ─────────────────────────────────────────────────────
-    const orderNow  = procurementRows.filter((r) => r.status === "order").length;
-    const watchCount = procurementRows.filter((r) => r.status === "watch").length;
-    const okCount   = procurementRows.filter((r) => r.status === "ok").length;
-    const totalItems = procurementRows.length;
- 
-    const kpiY = 36;
-    const kpiH = 26;
-    const kpiW = (contentWidth - 12) / 4;
- 
-    const kpis: {
-      label: string;
-      value: string;
-      sub: string;
-      color: [number, number, number];
-      bg: [number, number, number];
-    }[] = [
-      {
-        label: "Order Now",
-        value: String(orderNow),
-        sub: "Require immediate reorder",
-        color: [220, 53, 53],
-        bg: [255, 245, 245],
-      },
-      {
-        label: "Watch Items",
-        value: String(watchCount),
-        sub: "Monitor stock closely",
-        color: [217, 119, 6],
-        bg: [255, 252, 240],
-      },
-      {
-        label: "OK Items",
-        value: String(okCount),
-        sub: "Sufficient stock on hand",
-        color: [22, 163, 74],
-        bg: [240, 255, 244],
-      },
-      {
-        label: "Total Items Tracked",
-        value: String(totalItems),
-        sub: "In procurement scope",
-        color: [74, 137, 176],
-        bg: [240, 248, 255],
-      },
-    ];
- 
-    kpis.forEach((kpi, i) => {
-      const x = margin + i * (kpiW + 3.2);
-      doc.setFillColor(...kpi.bg);
-      doc.setDrawColor(...kpi.color);
-      doc.setLineWidth(0.4);
-      doc.roundedRect(x, kpiY, kpiW, kpiH, 2, 2, "FD");
-      doc.setFillColor(...kpi.color);
-      doc.rect(x, kpiY, kpiW, 3, "F");
-      doc.roundedRect(x, kpiY, kpiW, 3, 2, 2, "F");
- 
-      doc.setFont("times", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 100, 100);
-      doc.text(kpi.label, x + kpiW / 2, kpiY + 9.5, { align: "center" });
- 
-      doc.setFont("times", "bold");
-      doc.setFontSize(15);
-      doc.setTextColor(...kpi.color);
-      doc.text(kpi.value, x + kpiW / 2, kpiY + 19, { align: "center" });
- 
-      doc.setFont("times", "italic");
-      doc.setFontSize(6.5);
-      doc.setTextColor(150, 150, 150);
-      doc.text(kpi.sub, x + kpiW / 2, kpiY + 23.5, { align: "center" });
-    });
- 
-    // ── FORECAST STRIP ─────────────────────────────────────────────────
-    const stripY = kpiY + kpiH + 5;
-    doc.setFillColor(248, 250, 253);
-    doc.setDrawColor(210, 220, 230);
-    doc.setLineWidth(0.25);
-    doc.rect(margin, stripY, contentWidth, 15, "FD");
- 
-    doc.setFillColor(232, 242, 250);
-    doc.rect(margin, stripY, contentWidth, 5.5, "F");
-    doc.setFont("times", "bold");
-    doc.setFontSize(8);
-    doc.setTextColor(74, 137, 176);
-    doc.text("DEMAND FORECAST SUMMARY", margin + 4, stripY + 4);
- 
-    const forecastItems = [
-      { label: "Consumables (next mo.)",      value: `${consumForecast?.bestPredicted?.[0] ?? "--"} units` },
-      { label: "Trend direction",              value: consumForecast?.trend ?? "--" },
-      { label: "Forecast reliability (R\u00B2)", value: consumForecast?.linear?.rSquared?.toFixed(2) ?? "--" },
-      { label: "Monthly slope",               value: `${consumForecast?.linear?.slope?.toFixed(2) ?? "--"}/mo` },
-      { label: "Borrowables (next mo.)",       value: `${borrowForecast?.bestPredicted?.[0] ?? "--"} units` },
-    ];
- 
-    const fItemW = contentWidth / forecastItems.length;
-    forecastItems.forEach((fi, i) => {
-      const fx = margin + i * fItemW + fItemW / 2;
-      if (i > 0) {
-        doc.setDrawColor(210, 220, 230);
-        doc.setLineWidth(0.1);
-        doc.line(margin + i * fItemW, stripY + 6, margin + i * fItemW, stripY + 14);
-      }
-      doc.setFont("times", "normal");
-      doc.setFontSize(7);
-      doc.setTextColor(110, 110, 110);
-      doc.text(fi.label, fx, stripY + 9, { align: "center" });
-      doc.setFont("times", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(55, 118, 160);
-      doc.text(fi.value, fx, stripY + 13.5, { align: "center" });
-    });
- 
-    // ── PROCUREMENT TABLE (no cost column) ────────────────────────────
-    const tableStartY = stripY + 19;
- 
-    doc.setFont("times", "bold");
-    doc.setFontSize(9.5);
-    doc.setTextColor(50, 50, 50);
-    doc.text("PROCUREMENT ACTION TABLE", margin, tableStartY - 2.5);
- 
-    doc.setFont("times", "normal");
-    doc.setFontSize(7.5);
-    doc.setTextColor(220, 53, 53);
-    doc.text("[!] Order Now", pageWidth - margin - 50, tableStartY - 2);
-    doc.setTextColor(217, 119, 6);
-    doc.text("[~] Watch", pageWidth - margin - 28, tableStartY - 2);
-    doc.setTextColor(22, 163, 74);
-    doc.text("[OK]", pageWidth - margin - 8, tableStartY - 2);
- 
-    const bodyData = procurementRows.map((row) => {
-      const weeksNum = parseFloat(row.weeksLeft);
-      const weeksColor: [number, number, number] =
-        weeksNum < 2 ? [200, 0, 0] : weeksNum < 4 ? [180, 100, 0] : [40, 40, 40];
-      const statusLabel =
-        row.status === "order" ? "[!] ORDER NOW"
-        : row.status === "watch" ? "[~] WATCH"
-        : "[OK]";
-      const statusColor: [number, number, number] =
-        row.status === "order" ? [200, 0, 0]
-        : row.status === "watch" ? [180, 100, 0]
-        : [22, 163, 74];
- 
-      return [
-        row.description,
-        { content: String(row.currentStock),    styles: { halign: "center" as const } },
-        { content: String(row.weeklyBurnRate),  styles: { halign: "center" as const } },
-        {
-          content: `${row.weeksLeft} wks`,
-          styles: { halign: "center" as const, fontStyle: "bold" as const, textColor: weeksColor },
-        },
-        { content: `${row.predDemand} units`,   styles: { halign: "center" as const } },
-        {
-          content: row.suggestedOrder > 0 ? `${row.suggestedOrder} pcs` : "--",
-          styles: {
-            halign: "center" as const,
-            fontStyle: row.suggestedOrder > 0 ? "bold" as const : "normal" as const,
-            textColor: row.suggestedOrder > 0 ? [200, 0, 0] as [number,number,number] : [160, 160, 160] as [number,number,number],
-          },
-        },
-        {
-          content: statusLabel,
-          styles: { halign: "center" as const, fontStyle: "bold" as const, textColor: statusColor },
-        },
-      ];
-    });
- 
-    autoTable(doc, {
-      startY: tableStartY + 1,
-      head: [[
-        { content: "Item Description",  styles: { halign: "left"   as const } },
-        { content: "Stock",             styles: { halign: "center" as const } },
-        { content: "Burn / wk",         styles: { halign: "center" as const } },
-        { content: "Weeks Left",        styles: { halign: "center" as const } },
-        { content: "Pred. Demand",      styles: { halign: "center" as const } },
-        { content: "Suggested Order",   styles: { halign: "center" as const } },
-        { content: "Status",            styles: { halign: "center" as const } },
-      ]],
-      body: bodyData.length > 0
-        ? bodyData
-        : [["No procurement data available", "", "", "", "", "", ""]],
-      theme: "grid",
-      styles: {
-        fontSize: 8,
-        font: "times",
-        lineColor: [220, 225, 230],
-        lineWidth: 0.15,
-        textColor: [40, 40, 40],
-        cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 },
-      },
-      headStyles: {
-        fillColor: [74, 137, 176],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        fontSize: 8.5,
-        cellPadding: { top: 4, bottom: 4, left: 3, right: 3 },
-      },
-      alternateRowStyles: { fillColor: [248, 251, 253] },
-      columnStyles: {
-        0: { cellWidth: 90 },
-        1: { cellWidth: 18 },
-        2: { cellWidth: 18 },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 24 },
-        5: { cellWidth: 28 },
-        6: { cellWidth: 28 },
-      },
-    });
- 
-    // ── PAGE 2: ANALYSIS & INSIGHTS ───────────────────────────────────
-    doc.addPage();
-    doc.setFillColor(74, 137, 176);
-    doc.rect(0, 0, pageWidth, 12, "F");
-    doc.setFont("times", "bold");
-    doc.setFontSize(9);
-    doc.setTextColor(255, 255, 255);
-    doc.text("PROCUREMENT ANALYSIS & INSIGHTS", pageWidth / 2, 8, { align: "center" });
- 
-    let analyticsY = 18;
- 
-    // ── STATUS OVERVIEW ───────────────────────────────────────────────
-    doc.setFont("times", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(50, 50, 50);
-    doc.text("PROCUREMENT STATUS OVERVIEW", margin, analyticsY);
- 
-    const statusBoxY = analyticsY + 4;
-    const statusBoxH = 20;
-    const statusBoxW = (contentWidth - 8) / 3;
- 
-    const drawStatusBox = (
-      x: number, y: number, w: number,
-      label: string, count: number,
-      color: [number, number, number]
-    ) => {
-      doc.setFillColor(255, 255, 255);
-      doc.setDrawColor(...color);
-      doc.setLineWidth(0.5);
-      doc.rect(x, y, w, statusBoxH, "FD");
-      doc.setFillColor(...color);
-      doc.rect(x, y, w, 4.5, "F");
-      doc.setFont("times", "bold");
-      doc.setFontSize(7);
-      doc.setTextColor(255, 255, 255);
-      doc.text(label, x + 4, y + 3.5);
-      doc.setFont("times", "bold");
-      doc.setFontSize(16);
-      doc.setTextColor(...color);
-      doc.text(String(count), x + w / 2, y + 14.5, { align: "center" });
-      doc.setFont("times", "normal");
-      doc.setFontSize(7);
-      doc.setTextColor(100, 100, 100);
-      doc.text("item" + (count !== 1 ? "s" : ""), x + w / 2, y + 18.5, { align: "center" });
-    };
- 
-    drawStatusBox(margin,                      statusBoxY, statusBoxW, "CRITICAL \u2014 ORDER NOW",        orderNow,   [220, 53,  53]);
-    drawStatusBox(margin + statusBoxW + 4,     statusBoxY, statusBoxW, "WATCH \u2014 MONITOR CLOSELY",   watchCount, [217, 119, 6]);
-    drawStatusBox(margin + statusBoxW * 2 + 8, statusBoxY, statusBoxW, "OK \u2014 SUFFICIENT STOCK",     okCount,    [22,  163, 74]);
- 
-    analyticsY = statusBoxY + statusBoxH + 8;
- 
-    // ── CRITICAL ITEMS TABLE ──────────────────────────────────────────
-    const criticalItems = procurementRows.filter((r) => r.status === "order");
-    if (criticalItems.length > 0) {
-      doc.setFont("times", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(50, 50, 50);
-      doc.text("CRITICAL ITEMS \u2014 IMMEDIATE REORDER REQUIRED", margin, analyticsY);
- 
-      const criticalTableData = criticalItems.slice(0, 10).map((row) => [
-        row.description,
-        { content: String(row.currentStock), styles: { halign: "center" as const } },
-        {
-          content: `${row.weeksLeft} wks`,
-          styles: { halign: "center" as const, fontStyle: "bold" as const, textColor: [200, 0, 0] as [number,number,number] },
-        },
-        { content: String(row.weeklyBurnRate), styles: { halign: "center" as const } },
-        {
-          content: `${row.suggestedOrder} pcs`,
-          styles: { halign: "center" as const, fontStyle: "bold" as const, textColor: [200, 0, 0] as [number,number,number] },
-        },
-      ]);
- 
-      autoTable(doc, {
-        startY: analyticsY + 4,
-        head: [[
-          { content: "Item Description",  styles: { halign: "left"   as const } },
-          { content: "Stock",             styles: { halign: "center" as const } },
-          { content: "Weeks Left",        styles: { halign: "center" as const } },
-          { content: "Burn / wk",         styles: { halign: "center" as const } },
-          { content: "Suggested Order",   styles: { halign: "center" as const } },
-        ]],
-        body: criticalTableData,
-        theme: "grid",
-        styles: {
-          fontSize: 8, font: "times",
-          lineColor: [220, 225, 230], textColor: [40, 40, 40],
-          cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
-        },
-        headStyles: { fillColor: [220, 53, 53], textColor: [255, 255, 255], fontStyle: "bold" },
-        alternateRowStyles: { fillColor: [255, 245, 245] },
-        columnStyles: {
-          0: { cellWidth: 120 }, 1: { cellWidth: 20 },
-          2: { cellWidth: 24  }, 3: { cellWidth: 22 }, 4: { cellWidth: 30 },
-        },
-      });
- 
-      analyticsY = (doc as any).lastAutoTable.finalY + 7;
-    }
- 
-    // ── WATCH ITEMS TABLE ─────────────────────────────────────────────
-    const watchItems = procurementRows.filter((r) => r.status === "watch");
-    if (watchItems.length > 0 && analyticsY < pageHeight - 60) {
-      doc.setFont("times", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(50, 50, 50);
-      doc.text("WATCH ITEMS \u2014 MONITOR CLOSELY", margin, analyticsY);
- 
-      const watchTableData = watchItems.map((row) => [
-        row.description,
-        { content: String(row.currentStock), styles: { halign: "center" as const } },
-        {
-          content: `${row.weeksLeft} wks`,
-          styles: { halign: "center" as const, fontStyle: "bold" as const, textColor: [180, 100, 0] as [number,number,number] },
-        },
-        { content: String(row.weeklyBurnRate), styles: { halign: "center" as const } },
-        { content: `${row.predDemand} units`,  styles: { halign: "center" as const } },
-      ]);
- 
-      autoTable(doc, {
-        startY: analyticsY + 4,
-        head: [[
-          { content: "Item Description", styles: { halign: "left"   as const } },
-          { content: "Stock",            styles: { halign: "center" as const } },
-          { content: "Weeks Left",       styles: { halign: "center" as const } },
-          { content: "Burn / wk",        styles: { halign: "center" as const } },
-          { content: "Pred. Demand",     styles: { halign: "center" as const } },
-        ]],
-        body: watchTableData,
-        theme: "grid",
-        styles: {
-          fontSize: 8, font: "times",
-          lineColor: [220, 225, 230], textColor: [40, 40, 40],
-          cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
-        },
-        headStyles: { fillColor: [217, 119, 6], textColor: [255, 255, 255], fontStyle: "bold" },
-        alternateRowStyles: { fillColor: [255, 252, 240] },
-        columnStyles: {
-          0: { cellWidth: 120 }, 1: { cellWidth: 20 },
-          2: { cellWidth: 24  }, 3: { cellWidth: 22 }, 4: { cellWidth: 30 },
-        },
-      });
- 
-      analyticsY = (doc as any).lastAutoTable.finalY + 7;
-    }
- 
-    // ── FORECAST & INVENTORY SUMMARY ──────────────────────────────────
-    if (analyticsY < pageHeight - 50) {
-      doc.setFont("times", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(50, 50, 50);
-      doc.text("FORECAST & INVENTORY ANALYSIS", margin, analyticsY);
- 
-      const summaryY = analyticsY + 4;
-      const summaryBoxW = (contentWidth - 6) / 2;
-      const summaryBoxH = 28;
- 
-      // Forecast box
-      doc.setFillColor(240, 248, 255);
-      doc.setDrawColor(74, 137, 176);
-      doc.setLineWidth(0.3);
-      doc.roundedRect(margin, summaryY, summaryBoxW, summaryBoxH, 2, 2, "FD");
+    setGenerating("Procurement");
+    try {
+      const doc = new jsPDF("landscape");
+      const pageWidth = doc.internal.pageSize.width;
+      const pageHeight = doc.internal.pageSize.height;
+      const now = new Date();
+      const monthName = fullMonths[now.getMonth()];
+      const year = now.getFullYear();
+      const margin = 14;
+      const contentWidth = pageWidth - margin * 2;
+
+      // ── HEADER BAND ───────────────────────────────────────────────────
       doc.setFillColor(74, 137, 176);
-      doc.roundedRect(margin, summaryY, summaryBoxW, 5.5, 2, 2, "F");
-      doc.rect(margin, summaryY + 3.5, summaryBoxW, 2, "F");
-      doc.setFont("times", "bold");
-      doc.setFontSize(8);
-      doc.setTextColor(255, 255, 255);
-      doc.text("DEMAND FORECAST (Next Month)", margin + 3, summaryY + 4.5);
-      doc.setFont("times", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(60, 60, 60);
-      doc.text(`Consumables predicted: ${consumForecast?.bestPredicted?.[0] ?? "--"} units`, margin + 3, summaryY + 11);
-      doc.text(`Trend: ${consumForecast?.trend ?? "--"}`,                                     margin + 3, summaryY + 16);
-      doc.text(`Model reliability (R\u00B2): ${consumForecast?.linear?.rSquared?.toFixed(2) ?? "--"}`, margin + 3, summaryY + 21);
-      doc.text(`Borrowables predicted: ${borrowForecast?.bestPredicted?.[0] ?? "--"} units`,  margin + 3, summaryY + 26);
- 
-      // Inventory stats box
-      doc.setFillColor(245, 250, 243);
-      doc.setDrawColor(22, 163, 74);
-      doc.setLineWidth(0.3);
-      doc.roundedRect(margin + summaryBoxW + 6, summaryY, summaryBoxW, summaryBoxH, 2, 2, "FD");
-      doc.setFillColor(22, 163, 74);
-      doc.roundedRect(margin + summaryBoxW + 6, summaryY, summaryBoxW, 5.5, 2, 2, "F");
-      doc.rect(margin + summaryBoxW + 6, summaryY + 3.5, summaryBoxW, 2, "F");
-      doc.setFont("times", "bold");
-      doc.setFontSize(8);
-      doc.setTextColor(255, 255, 255);
-      doc.text("INVENTORY METRICS", margin + summaryBoxW + 9, summaryY + 4.5);
-      doc.setFont("times", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(60, 60, 60);
-      doc.text(`Total items in scope: ${procurementRows.length}`,                                          margin + summaryBoxW + 9, summaryY + 11);
-      doc.text(`Mean burn rate: ${inventoryStats?.meanBurnRate?.toFixed(2) ?? "--"} units/wk`,             margin + summaryBoxW + 9, summaryY + 16);
-      doc.text(`Burn rate std. deviation: ${inventoryStats?.burnRateStdDev?.toFixed(2) ?? "--"}`,          margin + summaryBoxW + 9, summaryY + 21);
-      doc.text(`High-burn outlier items: ${inventoryStats?.highBurnOutliers ?? 0}`,                        margin + summaryBoxW + 9, summaryY + 26);
- 
-      analyticsY = summaryY + summaryBoxH + 7;
-    }
- 
-    // ── AI INSIGHTS ───────────────────────────────────────────────────
-    if (groqInsight) {
-      const lines = doc.splitTextToSize(groqInsight, contentWidth - 10);
-      const insightBoxH = lines.length * 4.5 + 14;
-      const spaceNeeded = insightBoxH + 10 + 5;
-      const spaceLeft   = pageHeight - analyticsY;
- 
-      if (spaceNeeded > spaceLeft) {
-        doc.addPage();
-        doc.setFillColor(74, 137, 176);
-        doc.rect(0, 0, pageWidth, 12, "F");
-        doc.setFont("times", "bold");
-        doc.setFontSize(9);
-        doc.setTextColor(255, 255, 255);
-        doc.text("PROCUREMENT DECISION SUMMARY (cont.)", pageWidth / 2, 8, { align: "center" });
-        analyticsY = 16;
-      }
- 
-      doc.setFillColor(74, 137, 176);
-      doc.setDrawColor(74, 137, 176);
-      doc.setLineWidth(0.3);
-      doc.roundedRect(margin, analyticsY, contentWidth, insightBoxH, 2, 2, "F");
-      doc.setFillColor(245, 250, 255);
-      doc.roundedRect(margin, analyticsY + 7.5, contentWidth, insightBoxH - 7.5, 0, 0, "F");
-      doc.rect(margin, analyticsY + 5.5, contentWidth, 2, "F");
-      doc.setFont("times", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(255, 255, 255);
-      doc.text("AI PROCUREMENT INSIGHTS  \u00B7  Groq llama-3.3-70b", margin + 4, analyticsY + 5.3);
-      doc.setFont("times", "normal");
-      doc.setFontSize(8.5);
-      doc.setTextColor(40, 40, 40);
-      doc.text(lines, margin + 5.5, analyticsY + 13);
-      doc.setFillColor(0, 0, 0, 0);
-      doc.setDrawColor(74, 137, 176);
-      doc.setLineWidth(0.3);
-      doc.roundedRect(margin, analyticsY, contentWidth, insightBoxH, 2, 2, "D");
-    }
- 
-    // ── FOOTER (all pages) ────────────────────────────────────────────
-    const totalPages = (doc as any).internal.pages.length - 1;
-    for (let p = 1; p <= totalPages; p++) {
-      doc.setPage(p);
+      doc.rect(0, 0, pageWidth, 32, "F");
+
       doc.setFillColor(47, 100, 136);
-      doc.rect(0, pageHeight - 8, pageWidth, 8, "F");
+      doc.rect(0, 29, pageWidth, 3, "F");
+
+      doc.setFont("times", "bold");
+      doc.setFontSize(17);
+      doc.setTextColor(255, 255, 255);
+      doc.text("PROCUREMENT DECISION SUMMARY", pageWidth / 2, 11, {
+        align: "center",
+      });
+
       doc.setFont("times", "normal");
-      doc.setFontSize(7.5);
+      doc.setFontSize(9);
       doc.setTextColor(210, 235, 255);
       doc.text(
-        "FacilityLink  \u00B7  Centralized Inventory System  \u00B7  PLM General Services Office",
-        pageWidth / 2, pageHeight - 2.8, { align: "center" }
+        "Pamantasan ng Lungsod ng Maynila  ·  General Services Office",
+        pageWidth / 2,
+        18,
+        { align: "center" },
       );
+      doc.text(`Reporting Period: ${monthName} ${year}`, pageWidth / 2, 25, {
+        align: "center",
+      });
+
+      doc.setFontSize(7.5);
+      doc.setTextColor(180, 215, 245);
+      doc.text(
+        `Ref. No. GSO-${year}-${String(now.getMonth() + 1).padStart(2, "0")}-PROC`,
+        margin,
+        27,
+      );
+      doc.text(
+        `Generated: ${now.toLocaleDateString("en-PH", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`,
+        pageWidth - margin,
+        27,
+        { align: "right" },
+      );
+
+      // ── KPI CARDS ─────────────────────────────────────────────────────
+      const orderNow = procurementRows.filter(
+        (r) => r.status === "order",
+      ).length;
+      const watchCount = procurementRows.filter(
+        (r) => r.status === "watch",
+      ).length;
+      const okCount = procurementRows.filter((r) => r.status === "ok").length;
+      const totalItems = procurementRows.length;
+
+      const kpiY = 36;
+      const kpiH = 26;
+      const kpiW = (contentWidth - 12) / 4;
+
+      const kpis: {
+        label: string;
+        value: string;
+        sub: string;
+        color: [number, number, number];
+        bg: [number, number, number];
+      }[] = [
+        {
+          label: "Order Now",
+          value: String(orderNow),
+          sub: "Require immediate reorder",
+          color: [220, 53, 53],
+          bg: [255, 245, 245],
+        },
+        {
+          label: "Watch Items",
+          value: String(watchCount),
+          sub: "Monitor stock closely",
+          color: [217, 119, 6],
+          bg: [255, 252, 240],
+        },
+        {
+          label: "OK Items",
+          value: String(okCount),
+          sub: "Sufficient stock on hand",
+          color: [22, 163, 74],
+          bg: [240, 255, 244],
+        },
+        {
+          label: "Total Items Tracked",
+          value: String(totalItems),
+          sub: "In procurement scope",
+          color: [74, 137, 176],
+          bg: [240, 248, 255],
+        },
+      ];
+
+      kpis.forEach((kpi, i) => {
+        const x = margin + i * (kpiW + 3.2);
+        doc.setFillColor(...kpi.bg);
+        doc.setDrawColor(...kpi.color);
+        doc.setLineWidth(0.4);
+        doc.roundedRect(x, kpiY, kpiW, kpiH, 2, 2, "FD");
+        doc.setFillColor(...kpi.color);
+        doc.rect(x, kpiY, kpiW, 3, "F");
+        doc.roundedRect(x, kpiY, kpiW, 3, 2, 2, "F");
+
+        doc.setFont("times", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 100, 100);
+        doc.text(kpi.label, x + kpiW / 2, kpiY + 9.5, { align: "center" });
+
+        doc.setFont("times", "bold");
+        doc.setFontSize(15);
+        doc.setTextColor(...kpi.color);
+        doc.text(kpi.value, x + kpiW / 2, kpiY + 19, { align: "center" });
+
+        doc.setFont("times", "italic");
+        doc.setFontSize(6.5);
+        doc.setTextColor(150, 150, 150);
+        doc.text(kpi.sub, x + kpiW / 2, kpiY + 23.5, { align: "center" });
+      });
+
+      // ── FORECAST STRIP ─────────────────────────────────────────────────
+      const stripY = kpiY + kpiH + 5;
+      doc.setFillColor(248, 250, 253);
+      doc.setDrawColor(210, 220, 230);
+      doc.setLineWidth(0.25);
+      doc.rect(margin, stripY, contentWidth, 15, "FD");
+
+      doc.setFillColor(232, 242, 250);
+      doc.rect(margin, stripY, contentWidth, 5.5, "F");
+      doc.setFont("times", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(74, 137, 176);
+      doc.text("PROCUREMENT SUMMARY", margin + 4, stripY + 4);
+
+      // ── PROCUREMENT TABLE (no cost column) ────────────────────────────
+      const tableStartY = stripY + 19;
+
+      doc.setFont("times", "bold");
+      doc.setFontSize(9.5);
+      doc.setTextColor(50, 50, 50);
+      doc.text("PROCUREMENT ACTION TABLE", margin, tableStartY - 2.5);
+
+      doc.setFont("times", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(220, 53, 53);
+      doc.text("[!] Order Now", pageWidth - margin - 50, tableStartY - 2);
+      doc.setTextColor(217, 119, 6);
+      doc.text("[~] Watch", pageWidth - margin - 28, tableStartY - 2);
+      doc.setTextColor(22, 163, 74);
+      doc.text("[OK]", pageWidth - margin - 8, tableStartY - 2);
+
+      const bodyData = procurementRows.map((row) => {
+        const weeksNum = parseFloat(row.weeksLeft);
+        const weeksColor: [number, number, number] =
+          weeksNum < 2
+            ? [200, 0, 0]
+            : weeksNum < 4
+              ? [180, 100, 0]
+              : [40, 40, 40];
+        const statusLabel =
+          row.status === "order"
+            ? "[!] ORDER NOW"
+            : row.status === "watch"
+              ? "[~] WATCH"
+              : "[OK]";
+        const statusColor: [number, number, number] =
+          row.status === "order"
+            ? [200, 0, 0]
+            : row.status === "watch"
+              ? [180, 100, 0]
+              : [22, 163, 74];
+
+        return [
+          row.description,
+          {
+            content: String(row.currentStock),
+            styles: { halign: "center" as const },
+          },
+          {
+            content: String(row.weeklyBurnRate),
+            styles: { halign: "center" as const },
+          },
+          {
+            content: `${row.weeksLeft} wks`,
+            styles: {
+              halign: "center" as const,
+              fontStyle: "bold" as const,
+              textColor: weeksColor,
+            },
+          },
+          {
+            content: `${row.predDemand} units`,
+            styles: { halign: "center" as const },
+          },
+          {
+            content:
+              row.suggestedOrder > 0 ? `${row.suggestedOrder} pcs` : "--",
+            styles: {
+              halign: "center" as const,
+              fontStyle:
+                row.suggestedOrder > 0
+                  ? ("bold" as const)
+                  : ("normal" as const),
+              textColor:
+                row.suggestedOrder > 0
+                  ? ([200, 0, 0] as [number, number, number])
+                  : ([160, 160, 160] as [number, number, number]),
+            },
+          },
+          {
+            content: statusLabel,
+            styles: {
+              halign: "center" as const,
+              fontStyle: "bold" as const,
+              textColor: statusColor,
+            },
+          },
+        ];
+      });
+
+      autoTable(doc, {
+        startY: tableStartY + 1,
+        head: [
+          [
+            {
+              content: "Item Description",
+              styles: { halign: "left" as const },
+            },
+            { content: "Stock", styles: { halign: "center" as const } },
+            { content: "Burn / wk", styles: { halign: "center" as const } },
+            { content: "Weeks Left", styles: { halign: "center" as const } },
+            { content: "Pred. Demand", styles: { halign: "center" as const } },
+            {
+              content: "Suggested Order",
+              styles: { halign: "center" as const },
+            },
+            { content: "Status", styles: { halign: "center" as const } },
+          ],
+        ],
+        body:
+          bodyData.length > 0
+            ? bodyData
+            : [["No procurement data available", "", "", "", "", "", ""]],
+        theme: "grid",
+        styles: {
+          fontSize: 8,
+          font: "times",
+          lineColor: [220, 225, 230],
+          lineWidth: 0.15,
+          textColor: [40, 40, 40],
+          cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 },
+        },
+        headStyles: {
+          fillColor: [74, 137, 176],
+          textColor: [255, 255, 255],
+          fontStyle: "bold",
+          fontSize: 8.5,
+          cellPadding: { top: 4, bottom: 4, left: 3, right: 3 },
+        },
+        alternateRowStyles: { fillColor: [248, 251, 253] },
+        columnStyles: {
+          0: { cellWidth: 90 },
+          1: { cellWidth: 18 },
+          2: { cellWidth: 18 },
+          3: { cellWidth: 22 },
+          4: { cellWidth: 24 },
+          5: { cellWidth: 28 },
+          6: { cellWidth: 28 },
+        },
+      });
+
+      // ── PAGE 2: ANALYSIS & INSIGHTS ───────────────────────────────────
+      doc.addPage();
+      doc.setFillColor(74, 137, 176);
+      doc.rect(0, 0, pageWidth, 12, "F");
+      doc.setFont("times", "bold");
+      doc.setFontSize(9);
       doc.setTextColor(255, 255, 255);
-      doc.text(`Page ${p} of ${totalPages}`, pageWidth - margin, pageHeight - 2.8, { align: "right" });
-      doc.text(`${monthName} ${year}`, margin, pageHeight - 2.8);
+      doc.text("PROCUREMENT ANALYSIS & INSIGHTS", pageWidth / 2, 8, {
+        align: "center",
+      });
+
+      let analyticsY = 18;
+
+      // ── STATUS OVERVIEW ───────────────────────────────────────────────
+      doc.setFont("times", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(50, 50, 50);
+      doc.text("PROCUREMENT STATUS OVERVIEW", margin, analyticsY);
+
+      const statusBoxY = analyticsY + 4;
+      const statusBoxH = 20;
+      const statusBoxW = (contentWidth - 8) / 3;
+
+      const drawStatusBox = (
+        x: number,
+        y: number,
+        w: number,
+        label: string,
+        count: number,
+        color: [number, number, number],
+      ) => {
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(...color);
+        doc.setLineWidth(0.5);
+        doc.rect(x, y, w, statusBoxH, "FD");
+        doc.setFillColor(...color);
+        doc.rect(x, y, w, 4.5, "F");
+        doc.setFont("times", "bold");
+        doc.setFontSize(7);
+        doc.setTextColor(255, 255, 255);
+        doc.text(label, x + 4, y + 3.5);
+        doc.setFont("times", "bold");
+        doc.setFontSize(16);
+        doc.setTextColor(...color);
+        doc.text(String(count), x + w / 2, y + 14.5, { align: "center" });
+        doc.setFont("times", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.text("item" + (count !== 1 ? "s" : ""), x + w / 2, y + 18.5, {
+          align: "center",
+        });
+      };
+
+      drawStatusBox(
+        margin,
+        statusBoxY,
+        statusBoxW,
+        "CRITICAL \u2014 ORDER NOW",
+        orderNow,
+        [220, 53, 53],
+      );
+      drawStatusBox(
+        margin + statusBoxW + 4,
+        statusBoxY,
+        statusBoxW,
+        "WATCH \u2014 MONITOR CLOSELY",
+        watchCount,
+        [217, 119, 6],
+      );
+      drawStatusBox(
+        margin + statusBoxW * 2 + 8,
+        statusBoxY,
+        statusBoxW,
+        "OK \u2014 SUFFICIENT STOCK",
+        okCount,
+        [22, 163, 74],
+      );
+
+      analyticsY = statusBoxY + statusBoxH + 8;
+
+      // ── CRITICAL ITEMS TABLE ──────────────────────────────────────────
+      const criticalItems = procurementRows.filter((r) => r.status === "order");
+      if (criticalItems.length > 0) {
+        doc.setFont("times", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(50, 50, 50);
+        doc.text(
+          "CRITICAL ITEMS \u2014 IMMEDIATE REORDER REQUIRED",
+          margin,
+          analyticsY,
+        );
+
+        const criticalTableData = criticalItems.slice(0, 10).map((row) => [
+          row.description,
+          {
+            content: String(row.currentStock),
+            styles: { halign: "center" as const },
+          },
+          {
+            content: `${row.weeksLeft} wks`,
+            styles: {
+              halign: "center" as const,
+              fontStyle: "bold" as const,
+              textColor: [200, 0, 0] as [number, number, number],
+            },
+          },
+          {
+            content: String(row.weeklyBurnRate),
+            styles: { halign: "center" as const },
+          },
+          {
+            content: `${row.suggestedOrder} pcs`,
+            styles: {
+              halign: "center" as const,
+              fontStyle: "bold" as const,
+              textColor: [200, 0, 0] as [number, number, number],
+            },
+          },
+        ]);
+
+        autoTable(doc, {
+          startY: analyticsY + 4,
+          head: [
+            [
+              {
+                content: "Item Description",
+                styles: { halign: "left" as const },
+              },
+              { content: "Stock", styles: { halign: "center" as const } },
+              { content: "Weeks Left", styles: { halign: "center" as const } },
+              { content: "Burn / wk", styles: { halign: "center" as const } },
+              {
+                content: "Suggested Order",
+                styles: { halign: "center" as const },
+              },
+            ],
+          ],
+          body: criticalTableData,
+          theme: "grid",
+          styles: {
+            fontSize: 8,
+            font: "times",
+            lineColor: [220, 225, 230],
+            textColor: [40, 40, 40],
+            cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+          },
+          headStyles: {
+            fillColor: [220, 53, 53],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+          },
+          alternateRowStyles: { fillColor: [255, 245, 245] },
+          columnStyles: {
+            0: { cellWidth: 120 },
+            1: { cellWidth: 20 },
+            2: { cellWidth: 24 },
+            3: { cellWidth: 22 },
+            4: { cellWidth: 30 },
+          },
+        });
+
+        analyticsY = (doc as any).lastAutoTable.finalY + 7;
+      }
+
+      // ── WATCH ITEMS TABLE ─────────────────────────────────────────────
+      const watchItems = procurementRows.filter((r) => r.status === "watch");
+      if (watchItems.length > 0 && analyticsY < pageHeight - 60) {
+        doc.setFont("times", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(50, 50, 50);
+        doc.text("WATCH ITEMS \u2014 MONITOR CLOSELY", margin, analyticsY);
+
+        const watchTableData = watchItems.map((row) => [
+          row.description,
+          {
+            content: String(row.currentStock),
+            styles: { halign: "center" as const },
+          },
+          {
+            content: `${row.weeksLeft} wks`,
+            styles: {
+              halign: "center" as const,
+              fontStyle: "bold" as const,
+              textColor: [180, 100, 0] as [number, number, number],
+            },
+          },
+          {
+            content: String(row.weeklyBurnRate),
+            styles: { halign: "center" as const },
+          },
+          {
+            content: `${row.predDemand} units`,
+            styles: { halign: "center" as const },
+          },
+        ]);
+
+        autoTable(doc, {
+          startY: analyticsY + 4,
+          head: [
+            [
+              {
+                content: "Item Description",
+                styles: { halign: "left" as const },
+              },
+              { content: "Stock", styles: { halign: "center" as const } },
+              { content: "Weeks Left", styles: { halign: "center" as const } },
+              { content: "Burn / wk", styles: { halign: "center" as const } },
+              {
+                content: "Pred. Demand",
+                styles: { halign: "center" as const },
+              },
+            ],
+          ],
+          body: watchTableData,
+          theme: "grid",
+          styles: {
+            fontSize: 8,
+            font: "times",
+            lineColor: [220, 225, 230],
+            textColor: [40, 40, 40],
+            cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+          },
+          headStyles: {
+            fillColor: [217, 119, 6],
+            textColor: [255, 255, 255],
+            fontStyle: "bold",
+          },
+          alternateRowStyles: { fillColor: [255, 252, 240] },
+          columnStyles: {
+            0: { cellWidth: 120 },
+            1: { cellWidth: 20 },
+            2: { cellWidth: 24 },
+            3: { cellWidth: 22 },
+            4: { cellWidth: 30 },
+          },
+        });
+
+        analyticsY = (doc as any).lastAutoTable.finalY + 7;
+      }
+
+      // ── FORECAST & INVENTORY SUMMARY ──────────────────────────────────
+      if (analyticsY < pageHeight - 50) {
+        doc.setFont("times", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(50, 50, 50);
+        doc.text("INVENTORY ANALYSIS", margin, analyticsY);
+
+        const summaryY = analyticsY + 4;
+        const summaryBoxW = (contentWidth - 6) / 2;
+        const summaryBoxH = 28;
+
+        // Inventory stats box (only, removed forecast box)
+        doc.setFillColor(240, 248, 255);
+        doc.setDrawColor(22, 163, 74);
+        doc.setLineWidth(0.3);
+        doc.roundedRect(
+          margin + summaryBoxW + 6,
+          summaryY,
+          summaryBoxW,
+          summaryBoxH,
+          2,
+          2,
+          "FD",
+        );
+        doc.setFillColor(22, 163, 74);
+        doc.roundedRect(
+          margin + summaryBoxW + 6,
+          summaryY,
+          summaryBoxW,
+          5.5,
+          2,
+          2,
+          "F",
+        );
+        doc.rect(margin + summaryBoxW + 6, summaryY + 3.5, summaryBoxW, 2, "F");
+        doc.setFont("times", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(255, 255, 255);
+        doc.text("INVENTORY METRICS", margin + summaryBoxW + 9, summaryY + 4.5);
+        doc.setFont("times", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(60, 60, 60);
+        doc.text(
+          `Total items in scope: ${procurementRows.length}`,
+          margin + summaryBoxW + 9,
+          summaryY + 11,
+        );
+        doc.text(
+          `Mean burn rate: ${inventoryStats?.meanBurnRate?.toFixed(2) ?? "--"} units/wk`,
+          margin + summaryBoxW + 9,
+          summaryY + 16,
+        );
+        doc.text(
+          `Burn rate std. deviation: ${inventoryStats?.burnRateStdDev?.toFixed(2) ?? "--"}`,
+          margin + summaryBoxW + 9,
+          summaryY + 21,
+        );
+        doc.text(
+          `High-burn outlier items: ${inventoryStats?.highBurnOutliers ?? 0}`,
+          margin + summaryBoxW + 9,
+          summaryY + 26,
+        );
+
+        analyticsY = summaryY + summaryBoxH + 7;
+      }
+
+      // ── FOOTER (all pages) ────────────────────────────────────────────
+      const totalPages = (doc as any).internal.pages.length - 1;
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        doc.setFillColor(47, 100, 136);
+        doc.rect(0, pageHeight - 8, pageWidth, 8, "F");
+        doc.setFont("times", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(210, 235, 255);
+        doc.text(
+          "FacilityLink  \u00B7  Centralized Inventory System  \u00B7  PLM General Services Office",
+          pageWidth / 2,
+          pageHeight - 2.8,
+          { align: "center" },
+        );
+        doc.setTextColor(255, 255, 255);
+        doc.text(
+          `Page ${p} of ${totalPages}`,
+          pageWidth - margin,
+          pageHeight - 2.8,
+          { align: "right" },
+        );
+        doc.text(`${monthName} ${year}`, margin, pageHeight - 2.8);
+      }
+
+      doc.save(`Procurement_Summary_${monthName}_${year}.pdf`);
+      toast.success("Procurement Summary Downloaded!");
+    } catch (err) {
+      toast.error("Failed to generate procurement summary.");
+      console.error(err);
+    } finally {
+      setGenerating(null);
     }
- 
-    doc.save(`Procurement_Summary_${monthName}_${year}.pdf`);
-    toast.success("Procurement Summary Downloaded!");
-  } catch (err) {
-    toast.error("Failed to generate procurement summary.");
-    console.error(err);
-  } finally {
-    setGenerating(null);
-  }
-};
+  };
 
   const handleCaptureSnapshot = async () => {
     setSnapshotLoading(true);
@@ -2514,61 +2474,6 @@ setConsumableBurnRate(sortedByPriority.slice(0, 10));
     }
   };
 
-  const runGroqInsights = async () => {
-  setGroqLoading(true);
-  setGroqInsight("");
- 
-  const criticalItems = procurementRows
-    .filter((r) => r.status === "order")
-    .map((r) => `${r.description} (${r.weeksLeft} wks left)`)
-    .join(", ");
- 
-  const prompt = `You are a procurement analyst for a Philippine university (PLM) General Services Office.
- 
-Inventory forecast data (computed via polynomial + linear regression):
-- Consumables predicted next month: ${consumForecast?.bestPredicted?.[0] ?? 0} units
-- Trend direction: ${consumForecast?.trend ?? "unknown"}
-- Forecast reliability (R²): ${consumForecast?.linear?.rSquared?.toFixed(2) ?? "N/A"}
-- Borrowables predicted next month: ${borrowForecast?.bestPredicted?.[0] ?? 0} units
-- Mean burn rate: ${inventoryStats?.meanBurnRate?.toFixed(2) ?? "N/A"} units/week
-- Burn rate std deviation: ${inventoryStats?.burnRateStdDev?.toFixed(2) ?? "N/A"}
-- High burn outliers: ${inventoryStats?.highBurnOutliers ?? 0} items
-- Stock-to-burnrate correlation: ${inventoryStats?.stockBurnCorrelation ?? "N/A"}
-- Critical items needing reorder: ${criticalItems || "none"}
- 
-In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on forecast reliability using the R² value, (3) flag any semester-linked demand spike, (4) give one specific procurement action with a suggested date. Be direct. Use Philippine academic calendar context.`;
- 
-  try {
-    const res = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [{ role: "user", content: prompt }],
-          max_tokens: 350,
-          temperature: 0.4,
-        }),
-      },
-    );
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error?.message || `Groq error ${res.status}`);
-    }
-    const data = await res.json();
-    setGroqInsight(data.choices?.[0]?.message?.content || "No response.");
-  } catch (e: any) {
-    toast.error(`Groq error: ${e.message}`);
-    setGroqInsight(`Failed to get insights: ${e.message}`);
-  } finally {
-    setGroqLoading(false);
-  }
-};
-
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/admin/inbox", icon: Inbox, label: "Inbox" },
@@ -2589,52 +2494,8 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
 
   // ── Build extended trend chart with 3-month forecast appended ─────────
   const trendChartData = useMemo(() => {
-  if (!monthlyTrendData.length || !consumForecast || !borrowForecast)
     return monthlyTrendData;
-
-  const shortMonths = [
-    "Jan","Feb","Mar","Apr","May","Jun",
-    "Jul","Aug","Sep","Oct","Nov","Dec",
-  ];
-  const now = new Date();
-
-  const forecastPoints = Array.from({ length: 3 }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() + i + 1, 1);
-    return {
-      month: shortMonths[d.getMonth()] + " (pred)",
-      consumables: null,
-      borrowables: null,
-      consumablesForecast: consumForecast?.bestPredicted?.[i] ?? null,
-      borrowablesForecast: borrowForecast?.bestPredicted?.[i] ?? null,
-      isForecast: true,
-    };
-  });
-
-  const last = monthlyTrendData[monthlyTrendData.length - 1];
-
-  // Historical points carry null for forecast keys
-  const historical = monthlyTrendData.map((d) => ({
-    ...d,
-    consumablesForecast: null,
-    borrowablesForecast: null,
-    isForecast: false,
-  }));
-
-  // Bridge: last historical point also carries the first forecast value
-  // so dashed lines visually start from the last real dot.
-  const bridged = [
-    ...historical.slice(0, -1),
-    {
-      ...historical[historical.length - 1],
-      consumablesForecast: consumForecast?.bestPredicted?.[0] ?? null,
-      borrowablesForecast: borrowForecast?.bestPredicted?.[0] ?? null,
-    },
-    // Forecast extension — skip index 0 since bridge already carries it
-    ...forecastPoints,
-  ];
-
-  return bridged;
-}, [monthlyTrendData, consumForecast, borrowForecast]);
+  }, [monthlyTrendData]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -3158,228 +3019,143 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
 
           {/* 13-Month Trend Analysis — WITH FORECAST EXTENSION */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            {!showTrendAnalysis ? (
-              <div className="h-[300px] flex flex-col items-center justify-center gap-4">
+            {/* 13-Month Trend Analysis */}
+            <div className="flex justify-between items-center mb-4">
+              <div>
                 <h3 className="text-xl font-bold text-gray-900">
                   13-Month Trend Analysis
                 </h3>
-                <p className="text-sm text-gray-600">
-                  Items distributed over time
+                <p className="text-sm text-gray-600 mt-1">
+                  Actual history of items distributed over time
                 </p>
-                <button
-                  onClick={() => setShowTrendAnalysis(true)}
-                  className="px-6 py-3 rounded-lg font-medium transition-colors bg-blue-500 text-white hover:bg-blue-600"
-                >
-                  Click here to show trend analysis
-                </button>
+              </div>
+              <div className="flex gap-2">
+                {(["all", "consumable", "borrowable"] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setTrendFilter(f)}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                      trendFilter === f
+                        ? f === "all"
+                          ? "bg-blue-500 text-white"
+                          : f === "consumable"
+                            ? "bg-green-500 text-white"
+                            : "bg-purple-500 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                  >
+                    {f === "all"
+                      ? "All Items"
+                      : f === "consumable"
+                        ? "Consumables"
+                        : "Borrowables"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {trendChartData.length > 0 ? (
+              <div style={{ width: "100%", position: "relative" }}>
+                <svg width="0" height="0" style={{ position: "absolute" }}>
+                  <defs>
+                    <linearGradient
+                      id="consumablesGradient"
+                      x1="0%"
+                      y1="0%"
+                      x2="0%"
+                      y2="100%"
+                    >
+                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.3" />
+                      <stop
+                        offset="100%"
+                        stopColor="#10b981"
+                        stopOpacity="0.01"
+                      />
+                    </linearGradient>
+                    <linearGradient
+                      id="borrowablesGradient"
+                      x1="0%"
+                      y1="0%"
+                      x2="0%"
+                      y2="100%"
+                    >
+                      <stop offset="0%" stopColor="#a855f7" stopOpacity="0.3" />
+                      <stop
+                        offset="100%"
+                        stopColor="#a855f7"
+                        stopOpacity="0.01"
+                      />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <ResponsiveContainer width="100%" height={340}>
+                  <ComposedChart data={trendChartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                    <YAxis>
+                      <Label
+                        value="Number of Items"
+                        angle={-90}
+                        position="insideLeft"
+                        style={{ textAnchor: "middle" }}
+                      />
+                    </YAxis>
+                    <Tooltip content={<ForecastTooltip />} />
+                    <Legend />
+                    {(trendFilter === "all" ||
+                      trendFilter === "consumable") && (
+                      <>
+                        <Area
+                          type="monotone"
+                          dataKey="consumables"
+                          stroke="#10b981"
+                          fill="url(#consumablesGradient)"
+                          strokeWidth={2}
+                          name="Consumables"
+                          opacity={consumableOpacity}
+                          isAnimationActive
+                          animationDuration={500}
+                          dot={false}
+                        />
+                      </>
+                    )}
+                    {(trendFilter === "all" ||
+                      trendFilter === "borrowable") && (
+                      <>
+                        <Area
+                          type="monotone"
+                          dataKey="borrowables"
+                          stroke="#a855f7"
+                          fill="url(#borrowablesGradient)"
+                          strokeWidth={2}
+                          name="Borrowables"
+                          opacity={borrowableOpacity}
+                          isAnimationActive
+                          animationDuration={500}
+                          dot={false}
+                        />
+                      </>
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
               </div>
             ) : (
-              <>
-                <div className="flex justify-between items-center mb-4">
-                  <div>
-                    <h3 className="text-xl font-bold text-gray-900">
-                      13-Month Trend + 3-Month Forecast
-                    </h3>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Actual history + predicted next 3 months
-                      <span className="ml-2 text-xs text-purple-600 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded-full">
-                        dashed = forecast
-                      </span>
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    {(["all", "consumable", "borrowable"] as const).map((f) => (
-                      <button
-                        key={f}
-                        onClick={() => setTrendFilter(f)}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                          trendFilter === f
-                            ? f === "all"
-                              ? "bg-blue-500 text-white"
-                              : f === "consumable"
-                                ? "bg-green-500 text-white"
-                                : "bg-purple-500 text-white"
-                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                        }`}
-                      >
-                        {f === "all"
-                          ? "All Items"
-                          : f === "consumable"
-                            ? "Consumables"
-                            : "Borrowables"}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {trendChartData.length > 0 ? (
-                  <div style={{ width: "100%", position: "relative" }}>
-                    <svg width="0" height="0" style={{ position: "absolute" }}>
-                      <defs>
-                        <linearGradient
-                          id="consumablesGradient"
-                          x1="0%"
-                          y1="0%"
-                          x2="0%"
-                          y2="100%"
-                        >
-                          <stop
-                            offset="0%"
-                            stopColor="#10b981"
-                            stopOpacity="0.3"
-                          />
-                          <stop
-                            offset="100%"
-                            stopColor="#10b981"
-                            stopOpacity="0.01"
-                          />
-                        </linearGradient>
-                        <linearGradient
-                          id="borrowablesGradient"
-                          x1="0%"
-                          y1="0%"
-                          x2="0%"
-                          y2="100%"
-                        >
-                          <stop
-                            offset="0%"
-                            stopColor="#a855f7"
-                            stopOpacity="0.3"
-                          />
-                          <stop
-                            offset="100%"
-                            stopColor="#a855f7"
-                            stopOpacity="0.01"
-                          />
-                        </linearGradient>
-                      </defs>
-                    </svg>
-                    <ResponsiveContainer width="100%" height={340}>
-                      <ComposedChart data={trendChartData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                        <YAxis>
-                          <Label
-                            value="Number of Items"
-                            angle={-90}
-                            position="insideLeft"
-                            style={{ textAnchor: "middle" }}
-                          />
-                        </YAxis>
-                        <Tooltip content={<ForecastTooltip />} />
-                        <Legend />
-                        {/* Vertical divider at forecast start */}
-                        {consumForecast && (
-                          <ReferenceLine
-                            x={trendChartData.find((d) => d.isForecast)?.month}
-                            stroke="#a855f7"
-                            strokeDasharray="4 4"
-                            label={{
-                              value: "Forecast →",
-                              position: "top",
-                              fontSize: 10,
-                              fill: "#a855f7",
-                            }}
-                          />
-                        )}
-                        {(trendFilter === "all" ||
-                          trendFilter === "consumable") && (
-                          <>
-                            <Area
-                              type="monotone"
-                              dataKey="consumables"
-                              stroke="#10b981"
-                              fill="url(#consumablesGradient)"
-                              strokeWidth={2}
-                              name="Consumables (actual)"
-                              opacity={consumableOpacity}
-                              isAnimationActive
-                              animationDuration={500}
-                              dot={false}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="consumablesForecast"
-                              stroke="#10b981"
-                              strokeWidth={2}
-                              strokeDasharray="6 3"
-                              dot={{ r: 4, fill: "#10b981" }}
-                              name="Consumables (forecast)"
-                              opacity={consumableOpacity}
-                            />
-                          </>
-                        )}
-                        {(trendFilter === "all" ||
-                          trendFilter === "borrowable") && (
-                          <>
-                            <Area
-                              type="monotone"
-                              dataKey="borrowables"
-                              stroke="#a855f7"
-                              fill="url(#borrowablesGradient)"
-                              strokeWidth={2}
-                              name="Borrowables (actual)"
-                              opacity={borrowableOpacity}
-                              isAnimationActive
-                              animationDuration={500}
-                              dot={false}
-                            />
-                            <Line
-                              type="monotone"
-                              dataKey="borrowablesForecast"
-                              stroke="#a855f7"
-                              strokeWidth={2}
-                              strokeDasharray="6 3"
-                              dot={{ r: 4, fill: "#a855f7" }}
-                              name="Borrowables (forecast)"
-                              opacity={borrowableOpacity}
-                            />
-                          </>
-                        )}
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                    {/* Forecast confidence note */}
-                    {consumForecast && (
-                      <div className="mt-3 p-3 bg-purple-50 border border-purple-100 rounded-lg flex items-center gap-3 text-xs text-purple-700">
-                        <TrendingUp className="w-4 h-4 flex-shrink-0" />
-                        <span>
-                          Forecast model:{" "}
-                          <strong>polynomial + linear regression</strong> · R²
-                          reliability:{" "}
-                          <strong>
-                            {consumForecast?.linear?.rSquared?.toFixed(2) ??
-                              "—"}
-                          </strong>{" "}
-                          · Trend:{" "}
-                          <strong>{consumForecast?.trend ?? "—"}</strong> · Next
-                          3 months:{" "}
-                          <strong>
-                            {consumForecast?.bestPredicted?.join(", ") ?? "—"}
-                          </strong>{" "}
-                          units
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="h-[300px] flex items-center justify-center text-gray-400">
-                    No data available
-                  </div>
-                )}
-              </>
+              <div className="h-[300px] flex items-center justify-center text-gray-400">
+                No data available
+              </div>
             )}
           </div>
 
-          {/* Item Trend Analysis — WITH FORECAST BAR */}
+          {/* Item Trend Analysis */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <h3 className="text-xl font-bold text-gray-900">
               Item Trend Analysis
             </h3>
             <p className="text-sm text-gray-600 mt-1 mb-6">
-              Top requested items with trend + next month prediction
+              Top requested items with trend analysis
             </p>
-            {topItemsWithForecast.length > 0 ? (
+            {topRequestedItems.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {topItemsWithForecast.map((item, index) => {
+                {topRequestedItems.map((item, index) => {
                   const statusColor = item.isNew
                     ? "blue"
                     : item.adviceType === "increase"
@@ -3430,71 +3206,6 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
                         </div>
                       </div>
 
-                      {/* Forecast comparison bar */}
-                      <div className="mb-4 pb-4 border-b border-gray-200">
-                        <div className="text-xs font-semibold text-gray-700 mb-5 block">
-                          Month comparison
-                        </div>
-
-                        {/* Current vs Predicted Comparison */}
-                        <div className="space-y-3">
-                          {/* Current Bar */}
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 text-right">
-                              <div className="text-xl font-bold text-[#4A89B0]">
-                                {item.requests}
-                              </div>
-                            </div>
-                            <div className="flex-1 flex items-center gap-2">
-                              <div
-                                className="bg-gradient-to-r from-[#4A89B0] to-[#7dd3fc] rounded-lg shadow-md border border-[#4A89B0]/20 transition-all hover:shadow-lg"
-                                style={{
-                                  width: `${Math.max(20, (item.requests / Math.max(item.requests, item.predicted)) * 250)}px`,
-                                  height: "28px",
-                                }}
-                              />
-                              <span className="text-xs font-semibold text-gray-600 whitespace-nowrap">
-                                Current
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Predicted Bar */}
-                          <div className="flex items-center gap-4">
-                            <div className="w-12 text-right">
-                              <div className="text-xl font-bold text-purple-600">
-                                {item.predicted}
-                              </div>
-                            </div>
-                            <div className="flex-1 flex items-center gap-2">
-                              <div
-                                className="bg-gradient-to-r from-purple-500 to-purple-300 rounded-lg shadow-md border border-purple-400/20 transition-all hover:shadow-lg"
-                                style={{
-                                  width: `${Math.max(20, (item.predicted / Math.max(item.requests, item.predicted)) * 250)}px`,
-                                  height: "28px",
-                                }}
-                              />
-                              <span className="text-xs font-semibold text-purple-700 whitespace-nowrap">
-                                Predicted
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Prediction value */}
-                      <div className="mb-4 p-3 bg-purple-50 rounded-lg border border-purple-100">
-                        <div className="text-xs text-purple-700 font-medium">
-                          Next month forecast
-                        </div>
-                        <div className="text-2xl font-bold text-purple-600 mt-2 flex items-baseline gap-1">
-                          {item.predicted}
-                          <span className="text-xs font-normal text-purple-600">
-                            units
-                          </span>
-                        </div>
-                      </div>
-
                       {/* Status/Advice badge */}
                       <div
                         className={`p-3 rounded-lg text-xs flex items-start gap-2.5 ${
@@ -3538,51 +3249,33 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
                   Decision Support System
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Predictive analytics · simple-statistics + ml-regression
+                  Inventory management · procurement analytics
                 </p>
               </div>
-              <span className="ml-auto px-3 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">
-                R² {consumForecast?.linear?.rSquared?.toFixed(2) ?? "—"}
-              </span>
             </div>
 
             {/* Metric cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-orange-50 rounded-lg p-4">
-                <p className="text-xs text-gray-500 mb-1">
-                  Predicted demand (next mo.)
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-red-50 rounded-lg p-4">
+                <p className="text-xs text-gray-500 mb-1">Order now</p>
+                <p className="text-2xl font-bold text-red-600">
+                  {totalOutOfStock}
                 </p>
-                <p className="text-2xl font-bold text-orange-600">
-                  {consumForecast?.bestPredicted?.[0] ?? "—"}
+                <p className="text-xs text-gray-400">items out of stock</p>
+              </div>
+              <div className="bg-blue-50 rounded-lg p-4">
+                <p className="text-xs text-gray-500 mb-1">Total requests</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {totalRequestsWeek}
                 </p>
-                <p className="text-xs text-gray-400">consumable units</p>
+                <p className="text-xs text-gray-400">this week</p>
               </div>
               <div className="bg-green-50 rounded-lg p-4">
-                <p className="text-xs text-gray-500 mb-1">
-                  Borrowable forecast
-                </p>
+                <p className="text-xs text-gray-500 mb-1">Restock needed</p>
                 <p className="text-2xl font-bold text-green-600">
-                  {borrowForecast?.bestPredicted?.[0] ?? "—"}
+                  {itemsNeedRestock}
                 </p>
-                <p className="text-xs text-gray-400">next month</p>
-              </div>
-              <div className="bg-red-50 rounded-lg p-4">
-  <p className="text-xs text-gray-500 mb-1">Order now</p>
-  <p className="text-2xl font-bold text-red-600">
-    {totalOutOfStock}
-  </p>
-  <p className="text-xs text-gray-400">items out of stock</p>
-</div>
-              <div className="bg-blue-50 rounded-lg p-4">
-                <p className="text-xs text-gray-500 mb-1">Demand trend</p>
-                <p className="text-2xl font-bold text-blue-600">
-                  {consumForecast
-                    ? `${consumForecast.trend === "rising" ? "↑" : consumForecast.trend === "falling" ? "↓" : "→"} ${consumForecast.trend}`
-                    : "—"}
-                </p>
-                <p className="text-xs text-gray-400">
-                  slope: {consumForecast?.linear?.slope?.toFixed(2) ?? "—"}/mo
-                </p>
+                <p className="text-xs text-gray-400">items</p>
               </div>
             </div>
 
@@ -3598,12 +3291,6 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
                 <div className="flex items-center gap-2">
                   {/* Tab buttons */}
                   <div className="flex bg-gray-100 rounded-lg p-1 gap-1">
-                    <button
-                      onClick={() => setDssChartTab("forecast")}
-                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${dssChartTab === "forecast" ? "bg-white text-[#4A89B0] shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
-                    >
-                      📈 Demand Forecast
-                    </button>
                     <button
                       onClick={() => setDssChartTab("burnrate")}
                       className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${dssChartTab === "burnrate" ? "bg-white text-[#4A89B0] shadow-sm" : "text-gray-600 hover:text-gray-900"}`}
@@ -3632,79 +3319,6 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
 
               {dssChartsExpanded && (
                 <>
-                  {dssChartTab === "forecast" && (
-                    <div>
-                      <p className="text-xs text-gray-500 mb-3">
-                        Last 6 months actual + 3-month prediction (dashed
-                        lines). Uses polynomial regression from trend data.
-                        {!consumForecast && (
-                          <span className="text-orange-500 ml-1">
-                            ⚠ Load trend analysis first to see forecast lines.
-                          </span>
-                        )}
-                      </p>
-                      {consumForecast && monthlyTrendData.length > 0 ? (
-                        <DSS_ForecastChart
-                          monthlyTrendData={monthlyTrendData}
-                          consumForecast={consumForecast}
-                          borrowForecast={borrowForecast}
-                        />
-                      ) : (
-                        <div className="h-[220px] flex flex-col items-center justify-center gap-2 text-gray-400 bg-gray-50 rounded-lg">
-                          <Activity className="w-8 h-8 opacity-40" />
-                          <p className="text-sm">
-                            Click "Show trend analysis" above to load forecast
-                            data
-                          </p>
-                        </div>
-                      )}
-                      {consumForecast && (
-                        <div className="grid grid-cols-3 gap-3 mt-4">
-                          {(consumForecast?.bestPredicted || [])
-                            .slice(0, 3)
-                            .map((val: number, i: number) => {
-                              const shortMonths = [
-                                "Jan",
-                                "Feb",
-                                "Mar",
-                                "Apr",
-                                "May",
-                                "Jun",
-                                "Jul",
-                                "Aug",
-                                "Sep",
-                                "Oct",
-                                "Nov",
-                                "Dec",
-                              ];
-                              const d = new Date(
-                                now.getFullYear(),
-                                now.getMonth() + i + 1,
-                                1,
-                              );
-                              return (
-                                <div
-                                  key={i}
-                                  className="bg-purple-50 rounded-lg p-3 text-center border border-purple-100"
-                                >
-                                  <p className="text-xs text-gray-500">
-                                    {shortMonths[d.getMonth()]}{" "}
-                                    {d.getFullYear()}
-                                  </p>
-                                  <p className="text-xl font-bold text-purple-600">
-                                    {val}
-                                  </p>
-                                  <p className="text-xs text-gray-400">
-                                    predicted units
-                                  </p>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                   {dssChartTab === "burnrate" && (
                     <div>
                       <p className="text-xs text-gray-500 mb-3">
@@ -3767,127 +3381,142 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
 
             {/* Procurement table */}
             <div className="flex items-center justify-between mb-3">
-  <h4 className="font-semibold text-gray-800">
-    Procurement Action Table
-  </h4>
-  <button
-    onClick={printProcurementSummary}
-    disabled={generating !== null || procurementRows.length === 0}
-    className="flex items-center gap-2 px-4 py-2 bg-[#4A89B0] text-white rounded-lg text-sm font-medium hover:bg-[#3776A0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-  >
-    <Printer className="w-4 h-4" />
-    {generating === "Procurement" ? "Generating..." : "Print Procurement Summary"}
-  </button>
-</div>
-
-<div className="overflow-x-auto mb-6">
-  <table className="w-full text-sm border-collapse">
-    <thead>
-      <tr className="bg-gray-100">
-        <th className="border border-gray-200 px-3 py-2 text-left font-semibold text-gray-700">
-          Item
-        </th>
-        <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
-          Stock
-        </th>
-        <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
-          Burn/wk
-        </th>
-        <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
-          Weeks left
-        </th>
-        <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
-          Predicted demand
-        </th>
-        <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
-          Suggested order
-        </th>
-        <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
-          Status
-        </th>
-      </tr>
-    </thead>
-    <tbody>
-      {procurementRows.length === 0 ? (
-        <tr>
-          <td colSpan={7} className="text-center text-gray-400 py-8">
-            No data — trigger trend analysis first
-          </td>
-        </tr>
-      ) : (
-        procurementRows.map((row, i) => (
-          <tr key={i} className="hover:bg-gray-50 transition-colors">
-            <td className="border border-gray-200 px-3 py-2 font-medium text-gray-900">
-              {row.description}
-            </td>
-            <td className="border border-gray-200 px-3 py-2 text-center">
-              {row.currentStock}
-            </td>
-            <td className="border border-gray-200 px-3 py-2 text-center">
-              {row.weeklyBurnRate}
-            </td>
-            <td
-              className={`border border-gray-200 px-3 py-2 text-center font-medium ${
-                parseFloat(row.weeksLeft) < 2
-                  ? "text-red-600"
-                  : parseFloat(row.weeksLeft) < 4
-                  ? "text-yellow-600"
-                  : "text-gray-700"
-              }`}
-            >
-              {row.weeksLeft} wks
-            </td>
-            <td className="border border-gray-200 px-3 py-2 text-center">
-              {row.predDemand} units
-            </td>
-            <td className="border border-gray-200 px-3 py-2 text-center font-bold text-red-600">
-              {row.suggestedOrder > 0 ? (
-                `${row.suggestedOrder} pcs`
-              ) : (
-                <span className="text-gray-400 font-normal">—</span>
-              )}
-            </td>
-            <td className="border border-gray-200 px-3 py-2 text-center">
-              <span
-                className={`px-2 py-1 rounded-full text-xs font-medium ${
-                  row.status === "order"
-                    ? "bg-red-100 text-red-700"
-                    : row.status === "watch"
-                    ? "bg-yellow-100 text-yellow-700"
-                    : "bg-green-100 text-green-700"
-                }`}
+              <h4 className="font-semibold text-gray-800">
+                Procurement Action Table
+              </h4>
+              <button
+                onClick={printProcurementSummary}
+                disabled={generating !== null || procurementRows.length === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-[#4A89B0] text-white rounded-lg text-sm font-medium hover:bg-[#3776A0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {row.status === "order"
-                  ? "⚠ Order now"
-                  : row.status === "watch"
-                  ? "👁 Watch"
-                  : "✓ OK"}
-              </span>
-            </td>
-          </tr>
-        ))
-      )}
-    </tbody>
-    {/* tfoot with budget totals is intentionally removed */}
-  </table>
-</div>
+                <Printer className="w-4 h-4" />
+                {generating === "Procurement"
+                  ? "Generating..."
+                  : "Print Procurement Summary"}
+              </button>
+            </div>
+
+            <div className="overflow-x-auto mb-6">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="border border-gray-200 px-3 py-2 text-left font-semibold text-gray-700">
+                      Item
+                    </th>
+                    <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
+                      Stock
+                    </th>
+                    <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
+                      Burn/wk
+                    </th>
+                    <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
+                      Weeks left
+                    </th>
+                    <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
+                      Predicted demand
+                    </th>
+                    <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
+                      Suggested order
+                    </th>
+                    <th className="border border-gray-200 px-3 py-2 text-center font-semibold text-gray-700">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {procurementRows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="text-center text-gray-400 py-8"
+                      >
+                        No data — trigger trend analysis first
+                      </td>
+                    </tr>
+                  ) : (
+                    procurementRows.map((row, i) => (
+                      <tr
+                        key={i}
+                        className="hover:bg-gray-50 transition-colors"
+                      >
+                        <td className="border border-gray-200 px-3 py-2 font-medium text-gray-900">
+                          {row.description}
+                        </td>
+                        <td className="border border-gray-200 px-3 py-2 text-center">
+                          {row.currentStock}
+                        </td>
+                        <td className="border border-gray-200 px-3 py-2 text-center">
+                          {row.weeklyBurnRate}
+                        </td>
+                        <td
+                          className={`border border-gray-200 px-3 py-2 text-center font-medium ${
+                            parseFloat(row.weeksLeft) < 2
+                              ? "text-red-600"
+                              : parseFloat(row.weeksLeft) < 4
+                                ? "text-yellow-600"
+                                : "text-gray-700"
+                          }`}
+                        >
+                          {row.weeksLeft} wks
+                        </td>
+                        <td className="border border-gray-200 px-3 py-2 text-center">
+                          {row.predDemand} units
+                        </td>
+                        <td className="border border-gray-200 px-3 py-2 text-center font-bold text-red-600">
+                          {row.suggestedOrder > 0 ? (
+                            `${row.suggestedOrder} pcs`
+                          ) : (
+                            <span className="text-gray-400 font-normal">—</span>
+                          )}
+                        </td>
+                        <td className="border border-gray-200 px-3 py-2 text-center">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              row.status === "order"
+                                ? "bg-red-100 text-red-700"
+                                : row.status === "watch"
+                                  ? "bg-yellow-100 text-yellow-700"
+                                  : "bg-green-100 text-green-700"
+                            }`}
+                          >
+                            {row.status === "order"
+                              ? "⚠ Order now"
+                              : row.status === "watch"
+                                ? "👁 Watch"
+                                : "✓ OK"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {/* tfoot with budget totals is intentionally removed */}
+              </table>
+            </div>
 
             {/* Procurement pagination controls */}
             {procurementTotalPages > 1 && (
               <div className="flex items-center justify-between mb-6 px-4 py-3 bg-gray-50 rounded-lg border border-gray-200">
                 <span className="text-sm text-gray-600">
-                  Page {procurementPage} of {procurementTotalPages} ({allRequestedItems.length} total requested items)
+                  Page {procurementPage} of {procurementTotalPages} (
+                  {allRequestedItems.length} total requested items)
                 </span>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setProcurementPage(Math.max(1, procurementPage - 1))}
+                    onClick={() =>
+                      setProcurementPage(Math.max(1, procurementPage - 1))
+                    }
                     disabled={procurementPage === 1}
                     className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     ← Previous
                   </button>
                   <button
-                    onClick={() => setProcurementPage(Math.min(procurementTotalPages, procurementPage + 1))}
+                    onClick={() =>
+                      setProcurementPage(
+                        Math.min(procurementTotalPages, procurementPage + 1),
+                      )
+                    }
                     disabled={procurementPage === procurementTotalPages}
                     className="px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
@@ -3896,34 +3525,6 @@ In 4 sentences: (1) identify highest stockout risks with urgency, (2) comment on
                 </div>
               </div>
             )}
-
-            {/* Groq AI Insights */}
-            <div className="border border-gray-200 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-[#4A89B0]" />
-                  <h4 className="font-semibold text-gray-900">AI Insights</h4>
-                  <span className="text-xs text-gray-400 border border-gray-200 px-2 py-0.5 rounded-full">
-                    Groq · llama-3.3-70b
-                  </span>
-                </div>
-                <button
-                  onClick={runGroqInsights}
-                  disabled={groqLoading || !consumForecast}
-                  className="flex items-center gap-2 px-4 py-2 bg-[#4A89B0] text-white rounded-lg text-sm font-medium hover:bg-[#3776A0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Activity className="w-4 h-4" />
-                  {groqLoading ? "Analyzing..." : "Run AI Analysis"}
-                </button>
-              </div>
-              <p className="text-sm text-gray-600 leading-relaxed">
-                {groqInsight
-                  ? groqInsight
-                  : !consumForecast
-                    ? 'Click "Show trend analysis" first to load forecast data, then run AI analysis.'
-                    : 'Click "Run AI Analysis" to generate procurement insights from your real inventory data.'}
-              </p>
-            </div>
           </div>
           {/* ── END DSS ────────────────────────────────────────────────────── */}
 
