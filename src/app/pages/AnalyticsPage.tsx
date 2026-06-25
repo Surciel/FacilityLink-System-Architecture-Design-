@@ -98,9 +98,10 @@ const ForecastTooltip = ({ active, payload, label }: any) => {
           />
           <span className="text-gray-600">{p.name}:</span>
           <span className="font-medium text-gray-900">{p.value}</span>
-          {p.payload?.isForecast && (
-            <span className="text-purple-500 italic">(forecast)</span>
-          )}
+          {typeof p.name === "string" &&
+            p.name.toLowerCase().includes("forecast") && (
+              <span className="text-purple-500 italic">(forecast)</span>
+            )}
         </div>
       ))}
     </div>
@@ -418,12 +419,9 @@ export function AnalyticsPage() {
       });
     }
 
-    const total = filtered.reduce((s, d) => s + d.requests, 0);
-    return filtered.map((d) => ({
-      ...d,
-      // Simple forecast: assume 5-15% growth based on share
-      predicted: Math.round(d.requests * (1 + (Math.random() * 0.1 + 0.05))),
-    }));
+    // Now `departmentActivity` already contains `predicted` computed by
+    // `fetchDepartmentActivity` (3-month moving average of approved quantities).
+    return filtered.map((d) => ({ ...d }));
   }, [departmentActivity, departmentFilter]);
 
   useEffect(() => {
@@ -676,17 +674,127 @@ export function AnalyticsPage() {
   };
 
   const fetchDepartmentActivity = async () => {
-    const { data } = await supabase.from("requests").select("department");
-    const grouped: Record<string, number> = {};
-    (data || []).forEach((row) => {
-      if (row.department)
-        grouped[row.department] = (grouped[row.department] || 0) + 1;
-    });
-    setDepartmentActivity(
-      Object.entries(grouped)
-        .sort((a, b) => b[1] - a[1])
-        .map(([dept, requests]) => ({ dept, requests })),
-    );
+    // Sum approved quantities per department for the CURRENT month but include
+    // all known departments (even if they have 0 requests this month).
+    try {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+      // Get all known departments (distinct) from requests table
+      const { data: allDeptRows, error: allDeptError } = await supabase
+        .from("requests")
+        .select("department")
+        .not("department", "is", null);
+
+      if (allDeptError) {
+        console.error("Error fetching all departments:", allDeptError);
+      }
+
+      const allDepartments = Array.from(
+        new Set(
+          (allDeptRows || []).map((r: any) => r.department).filter(Boolean),
+        ),
+      );
+
+      // Build date ranges for current and previous two months
+      const nowMonth = now.getMonth();
+      const nowYear = now.getFullYear();
+
+      const prev1Start = new Date(nowYear, nowMonth - 1, 1);
+      const prev1End = new Date(nowYear, nowMonth, 0, 23, 59, 59, 999);
+      const prev2Start = new Date(nowYear, nowMonth - 2, 1);
+      const prev2End = new Date(nowYear, nowMonth - 1, 0, 23, 59, 59, 999);
+
+      // Fetch approved request rows for each month, then compute counts client-side
+      // Current month: include all request rows (pending/approved/etc.) so
+      // 'Actual Requests' reflects what's in the requests table now.
+      const { data: currentRows, error: curErr } = await supabase
+        .from("requests")
+        .select("department, quantity_requested")
+        .gte("created_at", monthStart.toISOString())
+        .lte("created_at", monthEnd.toISOString());
+
+      const { data: prev1Rows, error: p1Err } = await supabase
+        .from("requests")
+        .select("department, quantity_requested")
+        .eq("status", "approved")
+        .gte("created_at", prev1Start.toISOString())
+        .lte("created_at", prev1End.toISOString());
+
+      const { data: prev2Rows, error: p2Err } = await supabase
+        .from("requests")
+        .select("department, quantity_requested")
+        .eq("status", "approved")
+        .gte("created_at", prev2Start.toISOString())
+        .lte("created_at", prev2End.toISOString());
+
+      if (curErr || p1Err || p2Err) {
+        console.error(
+          "Error fetching department monthly rows:",
+          curErr || p1Err || p2Err,
+        );
+      }
+
+      const mapRows = (rows: any) => {
+        const m: Record<string, number> = {};
+        (rows || []).forEach((r: any) => {
+          const dept = r.department || "Unknown";
+          m[dept] = (m[dept] || 0) + 1; // count rows per department
+        });
+        return m;
+      };
+
+      const currentMap = mapRows(currentRows);
+      const prev1Map = mapRows(prev1Rows);
+      const prev2Map = mapRows(prev2Rows);
+
+      const results: { dept: string; requests: number; predicted: number }[] =
+        [];
+
+      allDepartments.forEach((d) => {
+        const c = currentMap[d] || 0;
+        const p1 = prev1Map[d] || 0;
+        const p2 = prev2Map[d] || 0;
+        // 3-month moving average (use available months count)
+        const monthsAvailable = [c, p1, p2].filter((v) => v > 0).length || 1;
+        const sum = c + p1 + p2;
+        const avg = Math.round(sum / monthsAvailable);
+        results.push({ dept: d, requests: c, predicted: avg });
+      });
+
+      // Include any departments that appeared in the currentMap but weren't in allDepartments
+      Object.keys(currentMap).forEach((d) => {
+        if (!allDepartments.includes(d)) {
+          const c = currentMap[d] || 0;
+          const p1 = prev1Map[d] || 0;
+          const p2 = prev2Map[d] || 0;
+          const monthsAvailable = [c, p1, p2].filter((v) => v > 0).length || 1;
+          const sum = c + p1 + p2;
+          const avg = Math.round(sum / monthsAvailable);
+          results.push({ dept: d, requests: c, predicted: avg });
+        }
+      });
+
+      setDepartmentActivity(
+        results
+          .sort((a, b) => b.requests - a.requests)
+          .map((r) => ({
+            dept: r.dept,
+            requests: r.requests,
+            predicted: r.predicted,
+          })),
+      );
+    } catch (err) {
+      console.error("Error in fetchDepartmentActivity:", err);
+    }
   };
 
   const fetchSummaryStats = async () => {
@@ -731,187 +839,131 @@ export function AnalyticsPage() {
 
   const fetchCategorizedAssetAnalytics = async () => {
     try {
-      const { data: inventoryData } = await supabase
+      const { data: inventoryData, error: inventoryError } = await supabase
         .from("inventory")
         .select("item_no, description, remaining_stock, item_type");
 
-      // Step 1: get last 3 period labels
-      const { data: recentLabels } = await supabase
-        .from("inventory_history")
-        .select("period_label")
-        .order("snapshot_date", { ascending: false })
-        .limit(3);
+      if (inventoryError) {
+        console.error("Error fetching inventory data:", inventoryError);
+        return;
+      }
 
-      const labels = [
-        ...new Set(recentLabels?.map((r) => r.period_label) || []),
-      ];
-
-      // Step 2: fetch history if available
-      const { data: historyData } =
-        labels.length > 0
-          ? await supabase
-              .from("inventory_history")
-              .select(
-                "item_no, total_qty_issued, item_type, week1, week2, week3, week4",
-              )
-              .in("period_label", labels)
-          : { data: [] };
-
-      // Step 3: current month requests as fallback
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      const monthEnd = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
+      const daysInCurrentMonth = new Date(
+        now.getFullYear(),
+        now.getMonth() + 1,
+        0,
+      ).getDate();
 
-      const { data: currentRequests } = await supabase
+      const { data: currentRequests, error: requestsError } = await supabase
         .from("requests")
         .select("item_no, quantity_requested")
+        .eq("status", "approved")
         .gte("created_at", monthStart.toISOString())
         .lte("created_at", monthEnd.toISOString());
 
-      const currentMonthByItem: Record<string, number> = {};
+      if (requestsError) {
+        console.error(
+          "Error fetching current month approved requests:",
+          requestsError,
+        );
+        return;
+      }
+
+      const requestsByItem: Record<
+        string,
+        Array<{ quantity_requested: number }>
+      > = {};
       (currentRequests || []).forEach((req) => {
-        currentMonthByItem[req.item_no] =
-          (currentMonthByItem[req.item_no] || 0) +
-          (Number(req.quantity_requested) || 0);
+        const quantity = Number(req.quantity_requested) || 0;
+        requestsByItem[req.item_no] = requestsByItem[req.item_no] || [];
+        requestsByItem[req.item_no].push({ quantity_requested: quantity });
       });
 
-      const burnRateMap: Record<string, any> = {};
-      const utilizationMap: Record<string, any> = {};
+      const consumableMetrics: any[] = [];
+      const borrowableMetrics: any[] = [];
 
       (inventoryData || []).forEach((item) => {
         const itemType = item.item_type || "consumable";
+        const itemRequests = requestsByItem[item.item_no] || [];
 
         if (itemType === "consumable") {
-          const itemHistory = (historyData || []).filter(
-            (h) => h.item_no === item.item_no,
+          const totalUsed = itemRequests.reduce(
+            (sum, req) => sum + (Number(req.quantity_requested) || 0),
+            0,
           );
-          const monthsWithData = itemHistory.filter(
-            (h) => (h.total_qty_issued || 0) > 0,
-          );
-
-          let avgMonthlyUsage = 0;
-
-          if (monthsWithData.length > 0) {
-            avgMonthlyUsage =
-              monthsWithData.reduce(
-                (sum, h) => sum + (h.total_qty_issued || 0),
-                0,
-              ) / monthsWithData.length;
-          } else if (currentMonthByItem[item.item_no]) {
-            avgMonthlyUsage = currentMonthByItem[item.item_no];
-          }
-
-          const weeklyBurnRate = parseFloat(
-            (avgMonthlyUsage / 4.33).toFixed(2),
-          );
-
-          // KEY FIX: weeks until stockout
-          // - 0 stock → 0 weeks (order immediately), regardless of burn rate
-          // - has stock + burn rate → normal calculation
-          // - has stock, no burn data → Infinity (unknown, not critical)
+          const weeklyBurnRate = parseFloat((totalUsed / 4.33).toFixed(2));
           const weeksUntilStockout =
-            item.remaining_stock <= 0
-              ? 0
-              : weeklyBurnRate > 0
-                ? Math.ceil(item.remaining_stock / weeklyBurnRate)
-                : Infinity;
+            weeklyBurnRate > 0
+              ? Math.ceil(item.remaining_stock / weeklyBurnRate)
+              : null;
+          const recommendation =
+            weeksUntilStockout !== null && weeksUntilStockout <= 2
+              ? "Critical: Reorder immediately"
+              : weeksUntilStockout !== null && weeksUntilStockout <= 4
+                ? "Plan procurement"
+                : "Monitor usage";
 
-          burnRateMap[item.item_no] = {
+          consumableMetrics.push({
+            item_no: item.item_no,
             description: item.description,
-            monthlyUsage: parseFloat(avgMonthlyUsage.toFixed(1)),
+            currentStock: item.remaining_stock,
+            totalUsed,
             weeklyBurnRate,
-            currentStock: item.remaining_stock,
             weeksUntilStockout,
-            recommendation:
-              item.remaining_stock <= 0
-                ? "Out of stock — reorder immediately"
-                : weeklyBurnRate > 0
-                  ? `Reorder in ${Math.ceil(item.remaining_stock / weeklyBurnRate)} weeks`
-                  : "No usage data — monitor",
-          };
+            recommendation,
+          });
         } else {
-          // Borrowable
-          const itemHistory = (historyData || []).filter(
-            (h) => h.item_no === item.item_no,
-          );
-
-          let avgMonthlyRequests = 0;
-
-          if (itemHistory.length > 0) {
-            avgMonthlyRequests =
-              itemHistory.reduce(
-                (sum, h) =>
-                  sum +
-                  ((h.week1 || 0) +
-                    (h.week2 || 0) +
-                    (h.week3 || 0) +
-                    (h.week4 || 0)),
-                0,
-              ) / itemHistory.length;
-          } else if (currentMonthByItem[item.item_no]) {
-            avgMonthlyRequests = currentMonthByItem[item.item_no];
-          }
-
+          const totalRequests = itemRequests.length;
           const utilizationPercentage = parseFloat(
-            ((avgMonthlyRequests / 30) * 100).toFixed(1),
+            ((totalRequests / daysInCurrentMonth) * 100).toFixed(1),
           );
+          const recommendation =
+            utilizationPercentage < 5
+              ? "Low utilization - do not restock"
+              : utilizationPercentage <= 20
+                ? "Healthy utilization"
+                : "High utilization - monitor availability";
 
-          utilizationMap[item.item_no] = {
+          borrowableMetrics.push({
+            item_no: item.item_no,
             description: item.description,
-            totalRequests: parseFloat(avgMonthlyRequests.toFixed(1)),
-            utilizationPercentage,
             currentStock: item.remaining_stock,
-            recommendation:
-              utilizationPercentage < 5
-                ? "Low utilization - consider not restocking"
-                : utilizationPercentage > 20
-                  ? "High utilization - monitor availability"
-                  : "Healthy utilization rate",
-          };
+            totalRequests,
+            utilizationPercentage,
+            recommendation,
+          });
         }
       });
 
-      // ── FIXED SORTING: zero-stock items always included ───────────────────────
-      const allBurnRates = Object.values(burnRateMap) as any[];
-
-      // Filter to only items that have been requested (have usage history or current month requests)
-      const requestedItems = allBurnRates.filter(
-        (i) =>
-          i.currentStock <= 0 || i.weeklyBurnRate > 0 || i.monthlyUsage > 0,
+      const sortedConsumables = consumableMetrics.sort(
+        (a, b) => b.weeklyBurnRate - a.weeklyBurnRate,
+      );
+      const sortedBorrowables = borrowableMetrics.sort(
+        (a, b) => b.utilizationPercentage - a.utilizationPercentage,
       );
 
-      // Sort: out-of-stock items first, then by weekly burn rate (highest first)
-      const sortedByPriority = requestedItems.sort((a, b) => {
-        if (a.currentStock <= 0 && b.currentStock > 0) return -1;
-        if (a.currentStock > 0 && b.currentStock <= 0) return 1;
-        return b.weeklyBurnRate - a.weeklyBurnRate;
-      });
-      setAllRequestedItems(sortedByPriority);
-      setProcurementTotalPages(Math.ceil(sortedByPriority.length / 10));
+      setAllRequestedItems(sortedConsumables);
+      setProcurementTotalPages(Math.ceil(sortedConsumables.length / 10));
       setProcurementPage(1);
+      setConsumableBurnRate(sortedConsumables.slice(0, 10));
 
-      // Set first page immediately
-      setConsumableBurnRate(sortedByPriority.slice(0, 10));
+      setBorrowableUtilization(sortedBorrowables.slice(0, 5));
 
-      // Get current page data
-      const start = 0;
-      const end = 10;
-      const currentPageData = sortedByPriority.slice(start, end);
-      setConsumableBurnRate(currentPageData);
-
-      // Borrowable utilization — top 5 by utilization rate (unchanged)
-      setBorrowableUtilization(
-        Object.values(utilizationMap)
-          .sort(
-            (a: any, b: any) =>
-              b.utilizationPercentage - a.utilizationPercentage,
-          )
-          .slice(0, 5),
+      const burnRateValues = sortedConsumables.map(
+        (item) => item.weeklyBurnRate,
       );
-
-      // Stats for DSS cards
-      const burnRateValues = allBurnRates.map((i: any) => i.weeklyBurnRate);
-      const stockValues = allBurnRates.map((i: any) => i.currentStock);
+      const stockValues = sortedConsumables.map((item) => item.currentStock);
       setInventoryStats(computeInventoryStats(burnRateValues, stockValues));
     } catch (error) {
       console.error("Error fetching categorized asset analytics:", error);
@@ -2571,7 +2623,7 @@ export function AnalyticsPage() {
             <div className="bg-blue-600 rounded-xl p-6 text-white shadow-md">
               <Package className="w-8 h-8 mb-2 opacity-80" />
               <div className="text-3xl font-bold">{totalRequestsWeek}</div>
-              <div className="text-sm">Total Requests (Week)</div>
+              <div className="text-sm">Total Requests this week</div>
             </div>
             <div className="bg-orange-600 rounded-xl p-6 text-white shadow-md">
               <AlertCircle className="w-8 h-8 mb-2 opacity-80" />
@@ -2608,12 +2660,6 @@ export function AnalyticsPage() {
                               <h5 className="font-semibold text-gray-900 text-xs">
                                 {item.description}
                               </h5>
-                              <p className="text-xs text-gray-600 mt-1">
-                                Monthly Usage:{" "}
-                                <span className="font-bold text-blue-600">
-                                  {item.monthlyUsage} units
-                                </span>
-                              </p>
                             </div>
                             <TrendingDown className="w-4 h-4 text-red-500 flex-shrink-0" />
                           </div>
@@ -2639,7 +2685,9 @@ export function AnalyticsPage() {
                                 Weeks Left
                               </p>
                               <p className="text-sm font-bold text-orange-600">
-                                {item.weeksUntilStockout}
+                                {item.weeksUntilStockout !== null
+                                  ? item.weeksUntilStockout
+                                  : "N/A"}
                               </p>
                             </div>
                           </div>
@@ -2954,9 +3002,9 @@ export function AnalyticsPage() {
                     Department Activity
                   </h3>
                   <p className="text-sm text-gray-600 mt-1">
-                    Requests by department + next month forecast
+                    Requests Per Department
                     <span className="ml-2 text-xs text-purple-600 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded-full">
-                      lighter bar = predicted
+                      lighter bar = 3‑mo moving average (approved requests)
                     </span>
                   </p>
                 </div>

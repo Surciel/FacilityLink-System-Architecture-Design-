@@ -38,7 +38,9 @@ export function UserRequestPage() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
-  const debounceTimersRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const debounceTimersRef = useRef<
+    Record<string, ReturnType<typeof setTimeout>>
+  >({});
 
   // Cleanup debounce timers on component unmount
   useEffect(() => {
@@ -520,6 +522,18 @@ export function UserRequestPage() {
 
         if (!invItem) {
           toast.error(`Item ID "${item.id}" not found or not available.`);
+          setSubmitting(false);
+          return;
+        }
+        // Prevent requests that exceed current remaining stock
+        if (
+          typeof invItem.remaining_stock === "number" &&
+          invItem.remaining_stock < item.quantity
+        ) {
+          const desc = (invItem as any).description || item.id;
+          toast.error(
+            `Requested quantity for "${desc}" exceeds available stock (${invItem.remaining_stock}).`,
+          );
           setSubmitting(false);
           return;
         }
