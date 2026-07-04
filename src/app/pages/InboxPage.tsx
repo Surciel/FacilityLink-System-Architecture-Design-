@@ -137,7 +137,9 @@ export function InboxPage() {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
 
-    setGroupedRequests(sorted);
+    // Exclude rejected request groups from the inbox view
+    const visible = sorted.filter((g) => (g.status || "") !== "rejected");
+    setGroupedRequests(visible);
     setLoading(false);
   };
 
@@ -276,14 +278,16 @@ export function InboxPage() {
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
 
-    setGroupedRequests(sorted);
+    // Exclude rejected request groups from the inbox view
+    const visible = sorted.filter((g) => (g.status || "") !== "rejected");
+    setGroupedRequests(visible);
     setLoading(false);
   };
 
   const handleApproveRequest = async (group: GroupedRequest) => {
     setLoading(true);
     try {
-      const itemIds = group.items.map(i => i.item_no);
+      const itemIds = group.items.map((i) => i.item_no);
       const { data: inventoryItems, error: fetchError } = await supabase
         .from("inventory")
         .select("item_no, remaining_stock")
@@ -292,22 +296,36 @@ export function InboxPage() {
       if (fetchError || !inventoryItems) throw fetchError;
 
       for (const item of group.items) {
-        const invItem = inventoryItems.find(i => i.item_no === item.item_no);
+        const invItem = inventoryItems.find((i) => i.item_no === item.item_no);
         if (!invItem || invItem.remaining_stock < item.quantity_requested) {
-          toast.error(`Insufficient stock for ${(item as any).inventory?.description}. Cannot approve.`);
-          setLoading(false); return;
+          toast.error(
+            `Insufficient stock for ${(item as any).inventory?.description}. Cannot approve.`,
+          );
+          setLoading(false);
+          return;
         }
       }
 
-      await Promise.all(group.items.map(async (item) => {
-        const invItem = inventoryItems.find(i => i.item_no === item.item_no)!;
-        return supabase.from("inventory")
-          .update({ remaining_stock: invItem.remaining_stock - item.quantity_requested })
-          .eq("item_no", item.item_no);
-      }));
+      await Promise.all(
+        group.items.map(async (item) => {
+          const invItem = inventoryItems.find(
+            (i) => i.item_no === item.item_no,
+          )!;
+          return supabase
+            .from("inventory")
+            .update({
+              remaining_stock:
+                invItem.remaining_stock - item.quantity_requested,
+            })
+            .eq("item_no", item.item_no);
+        }),
+      );
 
-      const pkidList = group.items.map(i => i.pkid);
-      await supabase.from("requests").update({ status: 'approved' }).in("pkid", pkidList);
+      const pkidList = group.items.map((i) => i.pkid);
+      await supabase
+        .from("requests")
+        .update({ status: "approved" })
+        .in("pkid", pkidList);
 
       toast.success("Request approved and stock updated!");
       fetchRequests();
@@ -321,9 +339,12 @@ export function InboxPage() {
   const handleRejectRequest = async (group: GroupedRequest) => {
     setLoading(true);
     try {
-      const pkidList = group.items.map(i => i.pkid);
-      await supabase.from("requests").update({ status: 'rejected' }).in("pkid", pkidList);
-      
+      const pkidList = group.items.map((i) => i.pkid);
+      await supabase
+        .from("requests")
+        .update({ status: "rejected" })
+        .in("pkid", pkidList);
+
       toast.success("Request rejected.");
       fetchRequests();
     } catch (err) {
@@ -655,97 +676,117 @@ export function InboxPage() {
                     const isPending = group.status === "pending";
                     const isApproved = group.status === "approved";
                     const isRejected = group.status === "rejected";
-                    
-                    const cardTheme = isPending ? "border-yellow-300 bg-yellow-50" : 
-                                      isApproved ? "border-green-300 bg-green-50" : 
-                                      isRejected ? "border-red-300 bg-red-50" : "border-gray-200 bg-white";
+
+                    const cardTheme = isPending
+                      ? "border-yellow-300 bg-yellow-50"
+                      : isApproved
+                        ? "border-green-300 bg-green-50"
+                        : isRejected
+                          ? "border-red-300 bg-red-50"
+                          : "border-gray-200 bg-white";
 
                     return (
-                    <div
-                      key={group.group_id}
-                      ref={(el) => { if (el) groupRefs.current[group.group_id] = el; }}
-                      onClick={() => setSelectedGroup(group)}
-                      className={`rounded-lg shadow-sm border-2 cursor-pointer transition-all hover:shadow-md ${cardTheme} ${
-                        selectedGroup?.group_id === group.group_id ? "ring-2 ring-offset-2 ring-[#4A89B0]" : ""
-                      }`}
-                    >
-                      <div className="p-5">
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <h3 className="font-bold text-gray-900 text-lg">
-                                {group.requested_by}
-                              </h3>
-                              <span className="text-sm text-gray-600">
-                                ({group.department})
-                              </span>
+                      <div
+                        key={group.group_id}
+                        ref={(el) => {
+                          if (el) groupRefs.current[group.group_id] = el;
+                        }}
+                        onClick={() => setSelectedGroup(group)}
+                        className={`rounded-lg shadow-sm border-2 cursor-pointer transition-all hover:shadow-md ${cardTheme} ${
+                          selectedGroup?.group_id === group.group_id
+                            ? "ring-2 ring-offset-2 ring-[#4A89B0]"
+                            : ""
+                        }`}
+                      >
+                        <div className="p-5">
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-bold text-gray-900 text-lg">
+                                  {group.requested_by}
+                                </h3>
+                                <span className="text-sm text-gray-600">
+                                  ({group.department})
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3 mt-1">
+                                <span className="flex items-center gap-1 text-sm text-gray-500">
+                                  <Calendar className="w-4 h-4" />
+                                  {new Date(
+                                    group.created_at,
+                                  ).toLocaleDateString()}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${
+                                    isPending
+                                      ? "bg-yellow-200 text-yellow-800"
+                                      : isApproved
+                                        ? "bg-green-200 text-green-800"
+                                        : "bg-red-200 text-red-800"
+                                  }`}
+                                >
+                                  {group.status || "Pending"}
+                                </span>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-3 mt-1">
-                              <span className="flex items-center gap-1 text-sm text-gray-500">
-                                <Calendar className="w-4 h-4" />
-                                {new Date(group.created_at).toLocaleDateString()}
+
+                            <div className="flex flex-col items-end gap-2">
+                              <span className="text-sm font-medium text-gray-600">
+                                {group.items.length} item
+                                {group.items.length > 1 ? "s" : ""}
                               </span>
-                              <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider ${
-                                isPending ? "bg-yellow-200 text-yellow-800" :
-                                isApproved ? "bg-green-200 text-green-800" :
-                                "bg-red-200 text-red-800"
-                              }`}>
-                                {group.status || "Pending"}
-                              </span>
+
+                              {isPending && (
+                                <div className="flex items-center gap-2 mt-1">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleApproveRequest(group);
+                                    }}
+                                    className="flex items-center gap-1 text-sm bg-green-100 text-green-700 hover:bg-green-200 px-3 py-1.5 rounded-lg transition-colors border border-green-300 font-semibold"
+                                  >
+                                    <Check className="w-4 h-4" /> Approve
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRejectRequest(group);
+                                    }}
+                                    className="flex items-center gap-1 text-sm bg-red-100 text-red-600 hover:bg-red-200 px-3 py-1.5 rounded-lg transition-colors border border-red-300 font-semibold"
+                                  >
+                                    <X className="w-4 h-4" /> Reject
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
 
-                          <div className="flex flex-col items-end gap-2">
-                            <span className="text-sm font-medium text-gray-600">
-                              {group.items.length} item{group.items.length > 1 ? "s" : ""}
-                            </span>
-                            
-                            {isPending && (
-                              <div className="flex items-center gap-2 mt-1">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleApproveRequest(group);
-                                  }}
-                                  className="flex items-center gap-1 text-sm bg-green-100 text-green-700 hover:bg-green-200 px-3 py-1.5 rounded-lg transition-colors border border-green-300 font-semibold"
+                          <div className="bg-white/60 rounded-lg p-3 space-y-2 mt-2">
+                            <div className="text-sm font-medium text-gray-700">
+                              Requested Items:
+                            </div>
+                            {group.items.map((item, idx) => {
+                              const inventory = (item as any).inventory;
+                              return (
+                                <div
+                                  key={idx}
+                                  className="flex items-center justify-between text-sm py-1"
                                 >
-                                  <Check className="w-4 h-4" /> Approve
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleRejectRequest(group);
-                                  }}
-                                  className="flex items-center gap-1 text-sm bg-red-100 text-red-600 hover:bg-red-200 px-3 py-1.5 rounded-lg transition-colors border border-red-300 font-semibold"
-                                >
-                                  <X className="w-4 h-4" /> Reject
-                                </button>
-                              </div>
-                            )}
+                                  <span className="text-gray-800 font-medium">
+                                    {inventory?.description || "Unknown Item"}
+                                  </span>
+                                  <span className="bg-[#4A89B0] text-white px-3 py-1 rounded text-xs font-bold shadow-sm">
+                                    × {item.quantity_requested}{" "}
+                                    {inventory?.units?.name || ""}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
-                        </div>
-
-                        <div className="bg-white/60 rounded-lg p-3 space-y-2 mt-2">
-                          <div className="text-sm font-medium text-gray-700">
-                            Requested Items:
-                          </div>
-                          {group.items.map((item, idx) => {
-                            const inventory = (item as any).inventory;
-                            return (
-                              <div key={idx} className="flex items-center justify-between text-sm py-1">
-                                <span className="text-gray-800 font-medium">
-                                  {inventory?.description || "Unknown Item"}
-                                </span>
-                                <span className="bg-[#4A89B0] text-white px-3 py-1 rounded text-xs font-bold shadow-sm">
-                                  × {item.quantity_requested} {inventory?.units?.name || ""}
-                                </span>
-                              </div>
-                            );
-                          })}
                         </div>
                       </div>
-                    </div>
-                  )})
+                    );
+                  })
                 )}
               </div>
 
@@ -839,7 +880,6 @@ export function InboxPage() {
             </div>
           </div>
         </div>
-
       </main>
     </div>
   );

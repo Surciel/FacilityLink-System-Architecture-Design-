@@ -10,7 +10,6 @@ import {
   Inbox,
   BarChart3,
   LogOut,
-  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router";
@@ -121,34 +120,6 @@ export function Dashboard() {
   useEffect(() => {
     localStorage.setItem("sidebarPinned", JSON.stringify(isSidebarPinned));
   }, [isSidebarPinned]);
-
-  // Populate dummy burn rate data
-  useEffect(() => {
-    const dummyBurnRateData = [
-      {
-        name: "Whiteboard Markers",
-        burnRatePerWeek: 8,
-        currentStock: 24,
-        stockoutWeeks: 3,
-        advice: "Procure in 2 weeks",
-      },
-      {
-        name: "Cleaning Supplies",
-        burnRatePerWeek: 5,
-        currentStock: 15,
-        stockoutWeeks: 3,
-        advice: "Monitor for sudden demand spike",
-      },
-      {
-        name: "Tissue Boxes",
-        burnRatePerWeek: 12,
-        currentStock: 36,
-        stockoutWeeks: 3,
-        advice: "Consider increasing stock",
-      },
-    ];
-    setBurnRateData(dummyBurnRateData);
-  }, []);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -676,69 +647,6 @@ export function Dashboard() {
                     })
                   )}
                 </div>
-              </div>
-            </div>
-
-            {/* Consumable Burn Rate Widget */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-              <div className="p-6 border-b border-gray-100">
-                <div className="flex items-center gap-2 mb-2">
-                  <Activity className="w-5 h-5 text-blue-600" />
-                  <h2 className="text-xl font-bold text-gray-900">
-                    Consumable Burn Rate
-                  </h2>
-                </div>
-                <p className="text-sm text-gray-600">
-                  Weekly depletion & procurement timing
-                </p>
-              </div>
-
-              <div className="p-6 space-y-4">
-                {burnRateData.length > 0 ? (
-                  burnRateData.map((item, index) => (
-                    <div
-                      key={index}
-                      className="p-4 bg-blue-50 border border-blue-100 rounded-lg"
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <span className="text-sm font-semibold text-gray-900">
-                          {item.name}
-                        </span>
-                        <span className="text-xs font-bold text-blue-700 bg-blue-200 px-2 py-1 rounded">
-                          {item.burnRatePerWeek}/wk
-                        </span>
-                      </div>
-
-                      <div className="text-xs text-gray-700 space-y-2 mb-3">
-                        <div>
-                          <span className="font-medium">Stock:</span>{" "}
-                          {item.currentStock} units
-                        </div>
-                        <div>
-                          <span className="font-medium">Stockout in:</span>{" "}
-                          {item.stockoutWeeks} weeks
-                        </div>
-                      </div>
-
-                      <div className="bg-white rounded-full px-3 py-2 text-xs font-medium text-blue-700 inline-block">
-                        {item.advice}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 text-gray-400">
-                    No burn rate data available
-                  </div>
-                )}
-              </div>
-
-              <div className="p-6 border-t border-gray-100">
-                <button
-                  onClick={() => navigate("/admin/analytics")}
-                  className="w-full px-4 py-2.5 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] font-medium transition-colors flex items-center justify-center gap-2"
-                >
-                  View Full Report <ChevronRight className="w-4 h-4" />
-                </button>
               </div>
             </div>
           </div>

@@ -185,7 +185,15 @@ export function AnalyticsPage() {
       lower.includes("guidance") ||
       lower.includes("maintenance") ||
       lower.includes("management") ||
-      lower.includes("division")
+      lower.includes("division") ||
+      lower.includes("affairs") ||
+      lower.includes("department") ||
+      lower.includes("marketing") ||
+      lower.includes("finance") ||
+      lower.includes("operations") ||
+      lower.includes("human resources") ||
+      lower.includes("hr") ||
+      lower.includes("it")
     )
       return "office";
     return null;
@@ -204,6 +212,29 @@ export function AnalyticsPage() {
     "October",
     "November",
     "December",
+  ];
+  // Canonical department lists for Colleges and Offices (used for consistent ordering/display)
+  const collegesList = [
+    "College of Engineering",
+    "College of Science",
+    "College of Humanities and Social Science",
+    "College of Business Administration",
+    "College of Education",
+    "College of Nursing",
+    "College of Information Systems and Technology Management",
+  ];
+
+  const officesList = [
+    "IT Department",
+    "HR Department",
+    "Finance Department",
+    "Operations Department",
+    "Marketing Department",
+    "Academic Affairs",
+    "Administration",
+    "Library Services",
+    "Student Affairs",
+    "Research and Development",
   ];
   const now = new Date();
   const currentMonth = fullMonths[now.getMonth()];
@@ -226,6 +257,14 @@ export function AnalyticsPage() {
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
 
+  const getDepartmentMonthLabel = () => {
+    const now = new Date();
+    const month = now.getMonth();
+    const year = now.getFullYear();
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return `${fullMonths[month]} 1-${lastDay}, ${year}`;
+  };
+
   const procurementRows = useMemo(
     () => buildProcurementRows(consumableBurnRate),
     [consumableBurnRate],
@@ -234,18 +273,35 @@ export function AnalyticsPage() {
   // ── Velocity chart data with forecast appended ───────────────────────────
   const velocityChartData = useMemo(() => {
     if (!velocityData.length) return [];
+
+    const computeLinearTrendForecast = (values: number[]) => {
+      const points = values.map((value, index) => ({ x: index + 1, y: value }));
+      const n = points.length;
+      if (n === 0) return 0;
+      if (n === 1) return points[0].y;
+
+      const sumX = points.reduce((sum, p) => sum + p.x, 0);
+      const sumY = points.reduce((sum, p) => sum + p.y, 0);
+      const sumXY = points.reduce((sum, p) => sum + p.x * p.y, 0);
+      const sumX2 = points.reduce((sum, p) => sum + p.x * p.x, 0);
+      const denominator = n * sumX2 - sumX * sumX;
+      if (denominator === 0) return points[n - 1].y;
+
+      const b = (n * sumXY - sumX * sumY) / denominator;
+      const a = (sumY - b * sumX) / n;
+      const nextX = n + 1;
+      return Math.max(0, Math.round(a + b * nextX));
+    };
+
     return velocityData.map((item) => {
-      // Simple linear forecast: extrapolate from last 2 data points.
-      // When the current month is zero, fall back to the most recent non-zero month
-      // so we do not drop the predicted value to 0 too aggressively.
       const twoMoAgo = item.twoMonthsAgo ?? 0;
       const oneMoAgo = item.oneMonthAgo ?? 0;
       const curr = item.currentMonth ?? 0;
-      const delta1 = oneMoAgo - twoMoAgo;
-      const delta2 = curr - oneMoAgo;
-      const avgDelta = (delta1 + delta2) / 2;
-      const lastNonZero = curr > 0 ? curr : oneMoAgo > 0 ? oneMoAgo : twoMoAgo;
-      const nextMonthForecast = Math.max(0, Math.round(lastNonZero + avgDelta));
+      const nextMonthForecast = computeLinearTrendForecast([
+        twoMoAgo,
+        oneMoAgo,
+        curr,
+      ]);
       return { ...item, nextMonthForecast };
     });
   }, [velocityData]);
@@ -262,23 +318,40 @@ export function AnalyticsPage() {
   }, [topRequestedItems]);
 
   // ── Department activity with simple forecast + filtering ───────────────────
-  const deptWithForecast = useMemo(() => {
+  const deptData = useMemo(() => {
     if (!departmentActivity.length) return [];
 
-    // Filter departments based on selected category
-    let filtered = departmentActivity;
-    if (departmentFilter !== "all") {
-      filtered = departmentActivity.filter((d) => {
-        const category = categorizeDepartment(d.dept);
-        return departmentFilter === "colleges"
-          ? category === "college"
-          : category === "office";
-      });
+    // Build quick lookup of requests by department name
+    const reqMap: Record<string, number> = {};
+    departmentActivity.forEach((d) => {
+      reqMap[d.dept] = Number(d.requests) || 0;
+    });
+
+    if (departmentFilter === "colleges") {
+      // Show canonical colleges list (always show, even if zero)
+      return collegesList.map((name) => ({
+        dept: name,
+        requests: reqMap[name] || 0,
+      }));
     }
 
-    // Now `departmentActivity` already contains `predicted` computed by
-    // `fetchDepartmentActivity` (3-month moving average of approved quantities).
-    return filtered.map((d) => ({ ...d }));
+    if (departmentFilter === "offices") {
+      // Show canonical offices list (always show, even if zero)
+      return officesList.map((name) => ({
+        dept: name,
+        requests: reqMap[name] || 0,
+      }));
+    }
+
+    // departmentFilter === 'all'
+    // Show only canonical departments that have requests > 0 in the current month.
+    const union = [...collegesList, ...officesList];
+    const filtered = union
+      .filter((name) => (reqMap[name] || 0) > 0)
+      .map((name) => ({ dept: name, requests: reqMap[name] || 0 }));
+
+    // Sort by requests descending for All view
+    return filtered.sort((a, b) => b.requests - a.requests);
   }, [departmentActivity, departmentFilter]);
 
   useEffect(() => {
@@ -297,6 +370,7 @@ export function AnalyticsPage() {
 
   useEffect(() => {
     fetchAllData();
+    fetchDepartmentActivity();
   }, []);
 
   useEffect(() => {
@@ -331,7 +405,6 @@ export function AnalyticsPage() {
       await Promise.all([
         fetchWeeklyRequests(),
         fetchTopRequestedItems(),
-        fetchDepartmentActivity(),
         fetchSummaryStats(),
         fetchAvailableMonths(),
         fetchCategorizedAssetAnalytics(),
@@ -531,8 +604,7 @@ export function AnalyticsPage() {
   };
 
   const fetchDepartmentActivity = async () => {
-    // Sum approved quantities per department for the CURRENT month but include
-    // all known departments (even if they have 0 requests this month).
+    // Sum approved quantities per department for the current month only.
     try {
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -561,43 +633,15 @@ export function AnalyticsPage() {
         ),
       );
 
-      // Build date ranges for current and previous two months
-      const nowMonth = now.getMonth();
-      const nowYear = now.getFullYear();
-
-      const prev1Start = new Date(nowYear, nowMonth - 1, 1);
-      const prev1End = new Date(nowYear, nowMonth, 0, 23, 59, 59, 999);
-      const prev2Start = new Date(nowYear, nowMonth - 2, 1);
-      const prev2End = new Date(nowYear, nowMonth - 1, 0, 23, 59, 59, 999);
-
-      // Fetch approved request rows for each month, then compute counts client-side
-      // Current month: include all request rows (pending/approved/etc.) so
-      // 'Actual Requests' reflects what's in the requests table now.
+      // Fetch all request rows for the selected month.
       const { data: currentRows, error: curErr } = await supabase
         .from("requests")
         .select("department, quantity_requested")
         .gte("created_at", monthStart.toISOString())
         .lte("created_at", monthEnd.toISOString());
 
-      const { data: prev1Rows, error: p1Err } = await supabase
-        .from("requests")
-        .select("department, quantity_requested")
-        .eq("status", "approved")
-        .gte("created_at", prev1Start.toISOString())
-        .lte("created_at", prev1End.toISOString());
-
-      const { data: prev2Rows, error: p2Err } = await supabase
-        .from("requests")
-        .select("department, quantity_requested")
-        .eq("status", "approved")
-        .gte("created_at", prev2Start.toISOString())
-        .lte("created_at", prev2End.toISOString());
-
-      if (curErr || p1Err || p2Err) {
-        console.error(
-          "Error fetching department monthly rows:",
-          curErr || p1Err || p2Err,
-        );
+      if (curErr) {
+        console.error("Error fetching department monthly rows:", curErr);
       }
 
       const mapRows = (rows: any) => {
@@ -610,33 +654,19 @@ export function AnalyticsPage() {
       };
 
       const currentMap = mapRows(currentRows);
-      const prev1Map = mapRows(prev1Rows);
-      const prev2Map = mapRows(prev2Rows);
 
-      const results: { dept: string; requests: number; predicted: number }[] =
-        [];
+      const results: { dept: string; requests: number }[] = [];
 
       allDepartments.forEach((d) => {
         const c = currentMap[d] || 0;
-        const p1 = prev1Map[d] || 0;
-        const p2 = prev2Map[d] || 0;
-        // 3-month moving average (use available months count)
-        const monthsAvailable = [c, p1, p2].filter((v) => v > 0).length || 1;
-        const sum = c + p1 + p2;
-        const avg = Math.round(sum / monthsAvailable);
-        results.push({ dept: d, requests: c, predicted: avg });
+        results.push({ dept: d, requests: c });
       });
 
       // Include any departments that appeared in the currentMap but weren't in allDepartments
       Object.keys(currentMap).forEach((d) => {
         if (!allDepartments.includes(d)) {
           const c = currentMap[d] || 0;
-          const p1 = prev1Map[d] || 0;
-          const p2 = prev2Map[d] || 0;
-          const monthsAvailable = [c, p1, p2].filter((v) => v > 0).length || 1;
-          const sum = c + p1 + p2;
-          const avg = Math.round(sum / monthsAvailable);
-          results.push({ dept: d, requests: c, predicted: avg });
+          results.push({ dept: d, requests: c });
         }
       });
 
@@ -646,7 +676,6 @@ export function AnalyticsPage() {
           .map((r) => ({
             dept: r.dept,
             requests: r.requests,
-            predicted: r.predicted,
           })),
       );
     } catch (err) {
@@ -2860,12 +2889,12 @@ export function AnalyticsPage() {
                   </h3>
                   <p className="text-sm text-gray-600 mt-1">
                     Requests Per Department
-                    <span className="ml-2 text-xs text-purple-600 border border-purple-200 bg-purple-50 px-2 py-0.5 rounded-full">
-                      lighter bar = 3‑mo moving average (approved requests)
+                    <span className="ml-2 text-xs text-slate-600 border border-slate-200 bg-slate-50 px-2 py-0.5 rounded-full">
+                      {getDepartmentMonthLabel()}
                     </span>
                   </p>
                 </div>
-                <div className="flex gap-2 flex-wrap justify-end">
+                <div className="flex gap-2 flex-wrap justify-end items-center">
                   {(["all", "colleges", "offices"] as const).map((filter) => (
                     <button
                       key={filter}
@@ -2885,15 +2914,22 @@ export function AnalyticsPage() {
                   ))}
                 </div>
               </div>
-              {deptWithForecast.length > 0 ? (
-                <ResponsiveContainer width="100%" height={450}>
+              {deptData.length > 0 ? (
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(450, deptData.length * 42)}
+                >
                   <BarChart
-                    data={deptWithForecast}
+                    data={deptData}
                     layout="vertical"
                     margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis type="number" />
+                    <XAxis
+                      type="number"
+                      tickFormatter={(value) => Number(value).toFixed(0)}
+                      tick={{ fontSize: 12 }}
+                    />
                     <YAxis
                       dataKey="dept"
                       type="category"
@@ -2902,16 +2938,7 @@ export function AnalyticsPage() {
                     />
                     <Tooltip content={<ForecastTooltip />} />
                     <Legend />
-                    <Bar
-                      dataKey="requests"
-                      fill="#8b5cf6"
-                      name="Actual Requests"
-                    />
-                    <Bar
-                      dataKey="predicted"
-                      fill="#ddd6fe"
-                      name="Next Month (forecast)"
-                    />
+                    <Bar dataKey="requests" fill="#8b5cf6" name="This Month" />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -3144,7 +3171,6 @@ export function AnalyticsPage() {
               </div>
             )}
           </div>
-
 
           {/* Report Generation */}
           <div className="bg-gradient-to-br from-[#5891B8] to-[#3776A0] rounded-xl shadow-lg p-8 text-white">
