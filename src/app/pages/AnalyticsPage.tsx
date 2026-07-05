@@ -224,7 +224,7 @@ export function AnalyticsPage() {
     "College of Information Systems and Technology Management",
   ];
 
-  const officesList = [
+const officesList = [
     "IT Department",
     "HR Department",
     "Finance Department",
@@ -235,8 +235,9 @@ export function AnalyticsPage() {
     "Library Services",
     "Student Affairs",
     "Research and Development",
+    "Utility worker"
   ];
-  const now = new Date();
+    const now = new Date();
   const currentMonth = fullMonths[now.getMonth()];
   const currentYearStr = now.getFullYear();
   const currentMonthIndex = now.getMonth();

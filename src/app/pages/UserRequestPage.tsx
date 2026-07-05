@@ -60,6 +60,11 @@ export function UserRequestPage() {
     department: "",
   });
 
+  const OFFICE_ALLOWED_ITEMS = [
+  'JMS134', 'JMS145', 'JMS059', 'JMS012', 
+  'JMS087', 'JMS021', 'JMS010', 'JMS063A'
+];
+
   const [items, setItems] = useState<RequestItem[]>([
     {
       id: "",
@@ -147,7 +152,7 @@ export function UserRequestPage() {
     }
   }, [personalInfo.userType]);
 
-  const fetchAvailableItems = async () => {
+const fetchAvailableItems = async () => {
     if (!personalInfo.userType) return;
 
     setLoadingItems(true);
@@ -155,11 +160,22 @@ export function UserRequestPage() {
       const facilityPrefix =
         personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
 
-      const { data, error } = await supabase
+      // 1. Build the base query
+      let query = supabase
         .from("inventory")
         .select("item_no, description, unit_id, units(name), remaining_stock")
         .ilike("item_no", `${facilityPrefix}%`)
         .order("item_no", { ascending: true });
+
+      // 2. Apply the Office Filter
+      if (
+        personalInfo.userType === "faculty" && 
+        personalInfo.department !== "Utility worker"
+      ) {
+        query = query.in("item_no", OFFICE_ALLOWED_ITEMS);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         console.error("Error fetching inventory:", error);
@@ -173,7 +189,7 @@ export function UserRequestPage() {
       setLoadingItems(false);
     }
   };
-
+  
   const handleAddItem = () => {
     setItems([
       ...items,
@@ -196,32 +212,41 @@ export function UserRequestPage() {
   };
 
   const lookupInventoryItem = async (
-    searchValue: string,
-    searchBy: "id" | "description",
-  ) => {
-    if (!searchValue.trim()) return null;
+      searchValue: string,
+      searchBy: "id" | "description",
+    ) => {
+      if (!searchValue.trim()) return null;
 
-    // Determine the facility prefix based on user type
-    const facilityPrefix =
-      personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
+      const facilityPrefix =
+        personalInfo.userType === "faculty" ? "JMS" : "GYM-S";
 
-    // If searching by ID, search with the full ID (prefix + separator + number)
-    const separator = personalInfo.userType === "faculty" ? "" : "-";
-    const searchTerm =
-      searchBy === "id"
-        ? `${facilityPrefix}${separator}${searchValue}`
-        : searchValue;
+      const separator = personalInfo.userType === "faculty" ? "" : "-";
+      const searchTerm =
+        searchBy === "id"
+          ? `${facilityPrefix}${separator}${searchValue}`
+          : searchValue;
 
-    const { data, error } = await supabase
-      .from("inventory")
-      .select("item_no, description, unit_id, units(name)")
-      .ilike(searchBy === "id" ? "item_no" : "description", `%${searchTerm}%`)
-      .ilike("item_no", `${facilityPrefix}%`) // Filter by facility prefix
-      .limit(10);
+      // 1. Build the base query
+      let query = supabase
+        .from("inventory")
+        .select("item_no, description, unit_id, units(name)")
+        .ilike(searchBy === "id" ? "item_no" : "description", `%${searchTerm}%`)
+        .ilike("item_no", `${facilityPrefix}%`)
+        .limit(10);
 
-    if (error || !data) return null;
-    return data;
-  };
+      // 2. Apply the Office Filter
+      if (
+        personalInfo.userType === "faculty" && 
+        personalInfo.department !== "Utility worker"
+      ) {
+        query = query.in("item_no", OFFICE_ALLOWED_ITEMS);
+      }
+
+      const { data, error } = await query;
+
+      if (error || !data) return null;
+      return data;
+    };
 
   const handleItemChange = (
     itemIndex: number,
@@ -518,6 +543,17 @@ export function UserRequestPage() {
       // 2. Validate items locally using the fetched array
       const validatedItems = [];
       for (const item of items) {
+
+        if (
+          personalInfo.userType === "faculty" && 
+          personalInfo.department !== "Utility worker" &&
+          !OFFICE_ALLOWED_ITEMS.includes(item.id)
+        ) {
+           toast.error(`Item ID "${item.id}" is restricted to utility personnel only.`);
+           setSubmitting(false);
+           return;
+        }
+
         const invItem = inventoryItems.find((i) => i.item_no === item.id);
 
         if (!invItem) {
@@ -778,7 +814,7 @@ export function UserRequestPage() {
                           : "border-gray-300 bg-white text-gray-700 hover:border-gray-400"
                       }`}
                     >
-                      Faculty
+                      Employee
                     </button>
                   </div>
                 </div>
@@ -920,24 +956,21 @@ export function UserRequestPage() {
                       <option value="" disabled hidden>
                         Select department
                       </option>
-                      <option value="IT Department">IT Department</option>
-                      <option value="HR Department">HR Department</option>
-                      <option value="Finance Department">
-                        Finance Department
-                      </option>
-                      <option value="Operations Department">
-                        Operations Department
-                      </option>
-                      <option value="Marketing Department">
-                        Marketing Department
-                      </option>
-                      <option value="Academic Affairs">Academic Affairs</option>
-                      <option value="Administration">Administration</option>
-                      <option value="Library Services">Library Services</option>
-                      <option value="Student Affairs">Student Affairs</option>
-                      <option value="Research and Development">
-                        Research and Development
-                      </option>
+                      <optgroup label="-- Office --">
+                        <option value="IT Department">IT Department</option>
+                        <option value="HR Department">HR Department</option>
+                        <option value="Finance Department">Finance Department</option>
+                        <option value="Operations Department">Operations Department</option>
+                        <option value="Marketing Department">Marketing Department</option>
+                        <option value="Academic Affairs">Academic Affairs</option>
+                        <option value="Administration">Administration</option>
+                        <option value="Library Services">Library Services</option>
+                        <option value="Student Affairs">Student Affairs</option>
+                        <option value="Research and Development">Research and Development</option>
+                      </optgroup>
+                      <optgroup label="-- Utility --">
+                        <option value="Utility worker">Utility worker</option>
+                      </optgroup>
                     </select>
                   </div>
                 )}
