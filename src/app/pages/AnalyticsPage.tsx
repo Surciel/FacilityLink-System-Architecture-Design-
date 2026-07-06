@@ -428,105 +428,94 @@ const officesList = [
     setTotalRequestsWeek(count || 0);
   };
 
-  const fetchMonthlyTrend = async () => {
+const fetchMonthlyTrend = async () => {
     const now = new Date();
-    const currentMonthIndex = now.getMonth();
     const currentYear = now.getFullYear();
-    const fullMonths = [
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
-    ];
+    const currentMonthIndex = now.getMonth();
     const shortMonths = [
-      "Jan",
-      "Feb",
-      "Mar",
-      "Apr",
-      "May",
-      "Jun",
-      "Jul",
-      "Aug",
-      "Sep",
-      "Oct",
-      "Nov",
-      "Dec",
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
     ];
-    const trendByMonth: Record<
-      string,
-      { consumables: number; borrowables: number; isCurrent: boolean }
-    > = {};
+
+    // 1. Pre-build the 13 monthly buckets (prevents missing months if there's no data)
+    const trendByMonth: Record<string, { consumables: number; borrowables: number; isCurrent: boolean }> = {};
+    const monthOrder: string[] = [];
 
     for (let i = 0; i < 13; i++) {
-      const date = new Date(currentYear, currentMonthIndex, 1);
-      date.setMonth(date.getMonth() - i);
-      const monthIndex = date.getMonth();
-      const year = date.getFullYear();
-      const monthShort = shortMonths[monthIndex];
-      const firstDay = new Date(year, monthIndex, 1);
-      const lastDay = new Date(year, monthIndex + 1, 0);
+      const date = new Date(currentYear, currentMonthIndex - i, 1);
+      const mIndex = date.getMonth();
       const isCurrent = i === 0;
-      const displayKey = `${monthShort}${isCurrent ? " (Current)" : ""}`;
+      const displayKey = `${shortMonths[mIndex]}${isCurrent ? " (Current)" : ""}`;
 
-      const { data: monthRequests } = await supabase
-        .from("requests")
-        .select("item_no, quantity_requested, inventory(item_type)")
-        .gte("created_at", firstDay.toISOString())
-        .lte("created_at", lastDay.toISOString());
+      monthOrder.push(displayKey);
+      trendByMonth[displayKey] = { consumables: 0, borrowables: 0, isCurrent };
+    }
 
-      let consumableCount = 0;
-      let borrowableCount = 0;
+    // 2. Fetch all data for the last 13 months in exactly ONE query
+    const startDate = new Date(currentYear, currentMonthIndex - 12, 1);
+    const endDate = new Date(currentYear, currentMonthIndex + 1, 0, 23, 59, 59, 999);
 
-      (monthRequests || []).forEach((req) => {
+    const { data: monthRequests } = await supabase
+      .from("requests")
+      .select("quantity_requested, created_at, inventory(item_type)")
+      .gte("created_at", startDate.toISOString())
+      .lte("created_at", endDate.toISOString());
+
+    // 3. Sort the single payload into the correct buckets via JavaScript memory
+    (monthRequests || []).forEach((req) => {
+      if (!req.created_at) return;
+      const reqDate = new Date(req.created_at);
+      const reqMonth = reqDate.getMonth();
+      const reqYear = reqDate.getFullYear();
+
+      const isCurrent = reqMonth === currentMonthIndex && reqYear === currentYear;
+      const displayKey = `${shortMonths[reqMonth]}${isCurrent ? " (Current)" : ""}`;
+
+      // Only count items that fall exactly into our 13-month tracked buckets
+      if (trendByMonth[displayKey]) {
         const quantity = Number(req.quantity_requested) || 0;
         const reqAny = req as any;
         const itemType = Array.isArray(reqAny.inventory)
           ? reqAny.inventory[0]?.item_type
           : reqAny.inventory?.item_type;
-        if (itemType === "consumable") consumableCount += quantity;
-        else if (itemType === "borrowable") borrowableCount += quantity;
-        else consumableCount += quantity;
-      });
 
-      trendByMonth[displayKey] = {
-        consumables: consumableCount,
-        borrowables: borrowableCount,
-        isCurrent,
-      };
-    }
+        if (itemType === "borrowable") {
+          trendByMonth[displayKey].borrowables += quantity;
+        } else {
+          trendByMonth[displayKey].consumables += quantity; // default to consumable
+        }
+      }
+    });
 
-    const trendData = Object.entries(trendByMonth)
-      .reverse()
-      .map(([month, data]) => ({
-        month,
-        consumables: data.consumables,
-        borrowables: data.borrowables,
-        isCurrent: data.isCurrent,
-      }));
+    // 4. Format for the chart (reversing array so oldest is on the left)
+    const trendData = monthOrder.reverse().map((key) => ({
+      month: key,
+      consumables: trendByMonth[key].consumables,
+      borrowables: trendByMonth[key].borrowables,
+      isCurrent: trendByMonth[key].isCurrent,
+    }));
 
     setMonthlyTrendData(trendData);
   };
+  
+const fetchTopRequestedItems = async () => {
+    // 1. Calculate the start of last month to prevent pulling years of dead data
+    const now = new Date();
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
-  const fetchTopRequestedItems = async () => {
     const { data, error } = await supabase
       .from("requests")
       .select(
         "item_no, quantity_requested, created_at, inventory(description, unit_id, units(name))",
-      );
+      )
+      .gte("created_at", startOfLastMonth.toISOString());
+
     if (error) {
       toast.error("Failed to load request analytics data.");
       return;
     }
 
-    const now = new Date();
+    // We removed the duplicate 'const now = new Date();' here since it's already declared above
     const thisMonth = now.getMonth();
     const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
     const thisMonthCounts: Record<string, number> = {};
@@ -1697,7 +1686,7 @@ const officesList = [
       if (isHistoricalMonth) {
         const { data: historyItems } = await supabase
           .from("inventory_history")
-          .select("*")
+          .select("item_no, stock_on_hand, total_qty_issued, unit_cost, week1, week2, week3, week4, item_description")
           .ilike("item_no", `${prefix}%`)
           .eq("period_label", ssmiMonthOption)
           .order("item_no", { ascending: true });
@@ -1970,7 +1959,7 @@ const officesList = [
       let historyData: any[] = [];
       const { data: historicalData } = await supabase
         .from("inventory_history")
-        .select("*")
+        .select("item_no, item_description, week1, week2, week3, week4")
         .ilike("item_no", `${prefix}%`)
         .eq("period_label", risMonthOption);
 
@@ -1985,7 +1974,7 @@ const officesList = [
           const { data: requestsData } = await supabase
             .from("requests")
             .select(
-              "item_no, quantity_requested, inventory(description, unit_id, units(name))",
+              "item_no, quantity_requested, inventory(description)",
             )
             .gte("created_at", firstDay.toISOString())
             .lte("created_at", lastDay.toISOString());

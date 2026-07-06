@@ -78,7 +78,6 @@ export function InboxPage() {
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
     null,
   );
-  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Authentication and session check
   useEffect(() => {
@@ -97,104 +96,104 @@ export function InboxPage() {
     checkAuth();
   }, [navigate]);
 
-  const fetchRequestsRealtime = async () => {
-    const { data, error } = await supabase
-      .from("requests")
-      .select(
-        "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, status, inventory(description, unit_id, units(name))",
-      )
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Failed to load requests:", error);
-      return;
-    }
-
-    const groups: Record<string, GroupedRequest> = {};
-
-    (data || []).forEach((req: any) => {
-      const groupKey = req.request_group_id || req.pkid;
-      if (!groups[groupKey]) {
-        groups[groupKey] = {
-          group_id: groupKey,
-          requested_by: req.requested_by,
-          department: req.department,
-          created_at: req.created_at,
-          requester_type: req.requester_type,
-          requester_info: req.requester_info,
-          status: req.status || "pending",
-          items: [],
-        };
-      }
-      const requestItem: Request = {
-        ...req,
-      };
-      groups[groupKey].items.push(requestItem);
-    });
-
-    const sorted = Object.values(groups).sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-    );
-
-    // Exclude rejected request groups from the inbox view
-    const visible = sorted.filter((g) => (g.status || "") !== "rejected");
-    setGroupedRequests(visible);
-    setLoading(false);
-  };
-
   useEffect(() => {
-    fetchRequests();
+      fetchRequests(); // Initial load only
 
-    // Clean up any previous timeout
-    if (refreshTimeoutRef.current) {
-      clearTimeout(refreshTimeoutRef.current);
-    }
-
-    // Unsubscribe from previous subscription if it exists
-    if (subscriptionRef.current) {
-      subscriptionRef.current.unsubscribe();
-    }
-
-    // Set up real-time subscription for requests table
-    const subscription = supabase
-      .channel("requests-channel")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "requests",
-        },
-        (payload) => {
-          // Debounce the refresh to avoid multiple updates in quick succession
-          if (refreshTimeoutRef.current) {
-            clearTimeout(refreshTimeoutRef.current);
-          }
-
-          refreshTimeoutRef.current = setTimeout(() => {
-            fetchRequestsRealtime();
-          }, 500);
-        },
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          console.log("Inbox real-time subscription active");
-        }
-      });
-
-    subscriptionRef.current = subscription;
-
-    // Cleanup subscription on unmount
-    return () => {
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current);
-      }
+      // Unsubscribe from previous subscription if it exists
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }
-    };
-  }, []);
+
+      // Set up ultra-efficient real-time state mutation
+      const subscription = supabase
+        .channel("requests-channel")
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "requests",
+          },
+          async (payload) => {
+            if (payload.eventType === "INSERT") {
+              // Memory-Efficient: Fetch ONLY the missing joined data for this specific new row
+              const { data: newReq, error } = await supabase
+                .from("requests")
+                .select("pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, status, inventory(description, unit_id, units(name))")
+                .eq("pkid", payload.new.pkid)
+                .single();
+
+              if (newReq && !error) {
+                setGroupedRequests((prev) => {
+                  const groupKey = newReq.request_group_id || newReq.pkid;
+                  const existingGroupIndex = prev.findIndex((g) => g.group_id === groupKey);
+
+                  if (existingGroupIndex >= 0) {
+                    // Append to existing group (e.g., when a user requests 5 items at once)
+                    const updatedGroups = [...prev];
+                    updatedGroups[existingGroupIndex] = {
+                      ...updatedGroups[existingGroupIndex],
+                      items: [...updatedGroups[existingGroupIndex].items, newReq],
+                    };
+                    return updatedGroups;
+                  } else {
+                    // Create a brand new group at the very top of the inbox
+                    const newGroup: GroupedRequest = {
+                      group_id: groupKey,
+                      requested_by: newReq.requested_by,
+                      department: newReq.department,
+                      created_at: newReq.created_at,
+                      requester_type: newReq.requester_type,
+                      requester_info: newReq.requester_info,
+                      status: newReq.status || "pending",
+                      items: [newReq],
+                    };
+                    return [newGroup, ...prev];
+                  }
+                });
+              }
+            } else if (payload.eventType === "UPDATE") {
+              // Memory-Efficient: Update state directly without ANY database reads
+              setGroupedRequests((prev) => {
+                // If the request was rejected, remove it from the inbox entirely
+                if (payload.new.status === "rejected") {
+                  return prev.filter(
+                    (group) => !group.items.some((item) => item.pkid === payload.new.pkid)
+                  );
+                }
+
+                // Otherwise, update the status of the matching group
+                return prev.map((group) => {
+                  const hasItem = group.items.some((item) => item.pkid === payload.new.pkid);
+                  if (hasItem) {
+                    return { ...group, status: payload.new.status };
+                  }
+                  return group;
+                });
+              });
+            } else if (payload.eventType === "DELETE") {
+              // Safely remove deleted items from the UI
+              setGroupedRequests((prev) => 
+                prev.filter((group) => !group.items.some((item) => item.pkid === payload.old.pkid))
+              );
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED") {
+            console.log("Inbox real-time subscription active");
+          }
+        });
+
+      subscriptionRef.current = subscription;
+
+      // Cleanup subscription on unmount
+      return () => {
+        if (subscriptionRef.current) {
+          subscriptionRef.current.unsubscribe();
+        }
+      };
+    }, []);
 
   useEffect(() => {
     if (!loading && groupedRequests.length > 0) {
@@ -234,15 +233,17 @@ export function InboxPage() {
     setCurrentPage(1);
   }, [searchQuery, sortOption]);
 
-  const fetchRequests = async () => {
+const fetchRequests = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("requests")
       .select(
         "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, status, inventory(description, unit_id, units(name))",
       )
-      .order("created_at", { ascending: false });
-
+      .neq("status", "rejected") // 1. Filter out rejected items at the database level
+      .order("created_at", { ascending: false })
+      .limit(500); // 2. Place a hard ceiling to prevent browser crashes
+      
     if (error) {
       toast.error("Failed to load requests");
       console.error(error);
@@ -328,7 +329,6 @@ export function InboxPage() {
         .in("pkid", pkidList);
 
       toast.success("Request approved and stock updated!");
-      fetchRequests();
     } catch (err) {
       toast.error("Error approving request.");
     } finally {
@@ -346,7 +346,6 @@ export function InboxPage() {
         .in("pkid", pkidList);
 
       toast.success("Request rejected.");
-      fetchRequests();
     } catch (err) {
       toast.error("Error rejecting request.");
     } finally {
