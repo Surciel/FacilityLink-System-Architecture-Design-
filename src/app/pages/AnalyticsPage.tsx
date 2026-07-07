@@ -227,7 +227,7 @@ export function AnalyticsPage() {
     "College of Information Systems and Technology Management",
   ];
 
-const officesList = [
+  const officesList = [
     "IT Department",
     "HR Department",
     "Finance Department",
@@ -238,9 +238,9 @@ const officesList = [
     "Library Services",
     "Student Affairs",
     "Research and Development",
-    "Utility worker"
+    "Utility worker",
   ];
-    const now = new Date();
+  const now = new Date();
   const currentMonth = fullMonths[now.getMonth()];
   const currentYearStr = now.getFullYear();
   const currentMonthIndex = now.getMonth();
@@ -431,17 +431,30 @@ const officesList = [
     setTotalRequestsWeek(count || 0);
   };
 
-const fetchMonthlyTrend = async () => {
+  const fetchMonthlyTrend = async () => {
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonthIndex = now.getMonth();
     const shortMonths = [
-      "Jan", "Feb", "Mar", "Apr", "May", "Jun", 
-      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
     ];
 
     // 1. Pre-build the 13 monthly buckets (prevents missing months if there's no data)
-    const trendByMonth: Record<string, { consumables: number; borrowables: number; isCurrent: boolean }> = {};
+    const trendByMonth: Record<
+      string,
+      { consumables: number; borrowables: number; isCurrent: boolean }
+    > = {};
     const monthOrder: string[] = [];
 
     for (let i = 0; i < 13; i++) {
@@ -456,7 +469,15 @@ const fetchMonthlyTrend = async () => {
 
     // 2. Fetch all data for the last 13 months in exactly ONE query
     const startDate = new Date(currentYear, currentMonthIndex - 12, 1);
-    const endDate = new Date(currentYear, currentMonthIndex + 1, 0, 23, 59, 59, 999);
+    const endDate = new Date(
+      currentYear,
+      currentMonthIndex + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
 
     const { data: monthRequests } = await supabase
       .from("requests")
@@ -471,7 +492,8 @@ const fetchMonthlyTrend = async () => {
       const reqMonth = reqDate.getMonth();
       const reqYear = reqDate.getFullYear();
 
-      const isCurrent = reqMonth === currentMonthIndex && reqYear === currentYear;
+      const isCurrent =
+        reqMonth === currentMonthIndex && reqYear === currentYear;
       const displayKey = `${shortMonths[reqMonth]}${isCurrent ? " (Current)" : ""}`;
 
       // Only count items that fall exactly into our 13-month tracked buckets
@@ -500,8 +522,8 @@ const fetchMonthlyTrend = async () => {
 
     setMonthlyTrendData(trendData);
   };
-  
-const fetchTopRequestedItems = async () => {
+
+  const fetchTopRequestedItems = async () => {
     // 1. Calculate the start of last month to prevent pulling years of dead data
     const now = new Date();
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -1689,7 +1711,9 @@ const fetchTopRequestedItems = async () => {
       if (isHistoricalMonth) {
         const { data: historyItems } = await supabase
           .from("inventory_history")
-          .select("item_no, stock_on_hand, total_qty_issued, unit_cost, week1, week2, week3, week4, item_description")
+          .select(
+            "item_no, stock_on_hand, total_qty_issued, unit_cost, week1, week2, week3, week4, item_description",
+          )
           .ilike("item_no", `${prefix}%`)
           .eq("period_label", ssmiMonthOption)
           .order("item_no", { ascending: true });
@@ -1976,9 +2000,7 @@ const fetchTopRequestedItems = async () => {
           const lastDay = new Date(year, monthIndex, endDay);
           const { data: requestsData } = await supabase
             .from("requests")
-            .select(
-              "item_no, quantity_requested, inventory(description)",
-            )
+            .select("item_no, quantity_requested, inventory(description)")
             .gte("created_at", firstDay.toISOString())
             .lte("created_at", lastDay.toISOString());
           if (requestsData && requestsData.length > 0) {
