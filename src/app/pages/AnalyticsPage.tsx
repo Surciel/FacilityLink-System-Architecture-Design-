@@ -87,9 +87,12 @@ const monthNameToIndex: { [key: string]: number } = {
 // ── Custom tooltip for forecast charts ──────────────────────────────────────
 const ForecastTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
+  const itemName = payload[0]?.payload?.name;
+  const displayLabel = itemName ? `${itemName} (${label})` : label;
+
   return (
     <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
-      <p className="font-semibold text-gray-800 mb-1">{label}</p>
+      <p className="font-semibold text-gray-800 mb-1">{displayLabel}</p>
       {payload.map((p: any, i: number) => (
         <div key={i} className="flex items-center gap-2">
           <span
