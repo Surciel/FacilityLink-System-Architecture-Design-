@@ -2575,7 +2575,8 @@ export function AnalyticsPage() {
                 <>
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-5">
                     <div className="text-sm text-gray-500">
-                      Showing {paginatedTrendItems.length} of {topRequestedItems.length} items
+                      Showing {paginatedTrendItems.length} of{" "}
+                      {topRequestedItems.length} items
                     </div>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -2596,7 +2597,9 @@ export function AnalyticsPage() {
                         <select
                           value={trendPageSize}
                           onChange={(e) => {
-                            setTrendPageSize(Number(e.target.value) as 5 | 10 | 20);
+                            setTrendPageSize(
+                              Number(e.target.value) as 5 | 10 | 20,
+                            );
                             setTrendPage(1);
                           }}
                           className="px-3 py-2 border rounded-lg text-sm bg-white text-gray-900 outline-none"
@@ -2609,7 +2612,9 @@ export function AnalyticsPage() {
                       <div className="inline-flex items-center gap-2 text-sm text-gray-700">
                         <button
                           type="button"
-                          onClick={() => setTrendPage((prev) => Math.max(1, prev - 1))}
+                          onClick={() =>
+                            setTrendPage((prev) => Math.max(1, prev - 1))
+                          }
                           disabled={trendPage === 1}
                           className="px-3 py-2 rounded-lg border bg-white disabled:opacity-50"
                         >
@@ -2620,7 +2625,11 @@ export function AnalyticsPage() {
                         </span>
                         <button
                           type="button"
-                          onClick={() => setTrendPage((prev) => Math.min(trendTotalPages, prev + 1))}
+                          onClick={() =>
+                            setTrendPage((prev) =>
+                              Math.min(trendTotalPages, prev + 1),
+                            )
+                          }
                           disabled={trendPage === trendTotalPages}
                           className="px-3 py-2 rounded-lg border bg-white disabled:opacity-50"
                         >
@@ -3136,7 +3145,6 @@ export function AnalyticsPage() {
               </div>
             )}
           </div>
-
 
           {/* Report Generation */}
           <div className="bg-gradient-to-br from-[#5891B8] to-[#3776A0] rounded-xl shadow-lg p-8 text-white">
