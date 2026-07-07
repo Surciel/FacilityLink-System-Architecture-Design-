@@ -434,6 +434,7 @@ export function AnalyticsPage() {
     try {
       await Promise.all([
         fetchWeeklyRequests(),
+        fetchMonthlyTrend(),
         fetchTopRequestedItems(),
         fetchSummaryStats(),
         fetchAvailableMonths(),
@@ -493,52 +494,61 @@ export function AnalyticsPage() {
       trendByMonth[displayKey] = { consumables: 0, borrowables: 0, isCurrent };
     }
 
-    // 2. Fetch all data for the last 13 months in exactly ONE query
-    const startDate = new Date(currentYear, currentMonthIndex - 12, 1);
-    const endDate = new Date(
-      currentYear,
-      currentMonthIndex + 1,
-      0,
-      23,
-      59,
-      59,
-      999,
-    );
+    const { data: historyRows, error } = await supabase
+      .from("inventory_history")
+      .select("total_qty_issued, snapshot_date, period_label, item_type");
 
-    const { data: monthRequests } = await supabase
-      .from("requests")
-      .select("quantity_requested, created_at, inventory(item_type)")
-      .gte("created_at", startDate.toISOString())
-      .lte("created_at", endDate.toISOString());
+    if (error) {
+      console.error("Failed to load monthly trend history:", error);
+      return;
+    }
 
-    // 3. Sort the single payload into the correct buckets via JavaScript memory
-    (monthRequests || []).forEach((req) => {
-      if (!req.created_at) return;
-      const reqDate = new Date(req.created_at);
-      const reqMonth = reqDate.getMonth();
-      const reqYear = reqDate.getFullYear();
+    const parsePeriodLabel = (label: string) => {
+      const monthMatch = label.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+      const yearMatch = label.match(/(\d{4})$/);
+      if (!monthMatch || !yearMatch) return null;
+      const monthName = monthMatch[1];
+      const monthIndex = monthNameToIndex[monthName];
+      const year = Number(yearMatch[1]);
+      const isCurrent = monthIndex === currentMonthIndex && year === currentYear;
+      return `${shortMonths[monthIndex]}${isCurrent ? " (Current)" : ""}`;
+    };
 
-      const isCurrent =
-        reqMonth === currentMonthIndex && reqYear === currentYear;
-      const displayKey = `${shortMonths[reqMonth]}${isCurrent ? " (Current)" : ""}`;
+    const withinWindow = (date: Date) => {
+      const startDate = new Date(currentYear, currentMonthIndex - 12, 1);
+      const endDate = new Date(currentYear, currentMonthIndex + 1, 0, 23, 59, 59, 999);
+      return date >= startDate && date <= endDate;
+    };
 
-      // Only count items that fall exactly into our 13-month tracked buckets
-      if (trendByMonth[displayKey]) {
-        const quantity = Number(req.quantity_requested) || 0;
-        const reqAny = req as any;
-        const itemType = Array.isArray(reqAny.inventory)
-          ? reqAny.inventory[0]?.item_type
-          : reqAny.inventory?.item_type;
+    (historyRows || []).forEach((row: any) => {
+      let displayKey: string | null = null;
 
-        if (itemType === "borrowable") {
-          trendByMonth[displayKey].borrowables += quantity;
-        } else {
-          trendByMonth[displayKey].consumables += quantity; // default to consumable
+      if (row.snapshot_date) {
+        const rowDate = new Date(row.snapshot_date);
+        if (!Number.isNaN(rowDate.getTime()) && withinWindow(rowDate)) {
+          const rowMonth = rowDate.getMonth();
+          const rowYear = rowDate.getFullYear();
+          const isCurrent = rowMonth === currentMonthIndex && rowYear === currentYear;
+          displayKey = `${shortMonths[rowMonth]}${isCurrent ? " (Current)" : ""}`;
         }
+      }
+
+      if (!displayKey && row.period_label) {
+        displayKey = parsePeriodLabel(row.period_label);
+      }
+
+      if (!displayKey || !trendByMonth[displayKey]) return;
+
+      const quantity = Number(row.total_qty_issued) || 0;
+      const itemType = row.item_type;
+
+      if (itemType === "borrowable") {
+        trendByMonth[displayKey].borrowables += quantity;
+      } else {
+        trendByMonth[displayKey].consumables += quantity;
       }
     });
 
-    // 4. Format for the chart (reversing array so oldest is on the left)
     const trendData = monthOrder.reverse().map((key) => ({
       month: key,
       consumables: trendByMonth[key].consumables,
@@ -1057,52 +1067,41 @@ export function AnalyticsPage() {
   };
 
   // ── PRINT PROCUREMENT SUMMARY PDF ────────────────────────────────────────
-  const printProcurementSummary = () => {
+  const printProcurementSummary = async () => {
     setGenerating("Procurement");
     try {
-      const doc = new jsPDF("landscape");
+      const doc = new jsPDF("portrait");
       const pageWidth = doc.internal.pageSize.width;
       const pageHeight = doc.internal.pageSize.height;
       const now = new Date();
       const monthName = fullMonths[now.getMonth()];
       const year = now.getFullYear();
       const margin = 14;
-      const contentWidth = pageWidth - margin * 2;
 
-      // ── HEADER BAND ───────────────────────────────────────────────────
-      doc.setFillColor(74, 137, 176);
-      doc.rect(0, 0, pageWidth, 32, "F");
+      const { data: inventoryRows, error } = await supabase
+        .from("inventory")
+        .select("item_no, description, remaining_stock, critical_stock, item_type");
 
-      doc.setFillColor(47, 100, 136);
-      doc.rect(0, 29, pageWidth, 3, "F");
+      if (error) {
+        console.error("Failed to load critical inventory items:", error);
+      }
+
+      const criticalStockItems = (inventoryRows || []).filter(
+        (item: any) =>
+          item.critical_stock !== null &&
+          item.critical_stock !== undefined &&
+          Number(item.remaining_stock) <= Number(item.critical_stock),
+      );
 
       doc.setFont("times", "bold");
-      doc.setFontSize(17);
-      doc.setTextColor(255, 255, 255);
-      doc.text("PROCUREMENT DECISION SUMMARY", pageWidth / 2, 11, {
+      doc.setFontSize(18);
+      doc.text("PROCUREMENT DECISION SUMMARY", pageWidth / 2, 16, {
         align: "center",
       });
 
       doc.setFont("times", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(210, 235, 255);
-      doc.text(
-        "Pamantasan ng Lungsod ng Maynila  ·  General Services Office",
-        pageWidth / 2,
-        18,
-        { align: "center" },
-      );
-      doc.text(`Reporting Period: ${monthName} ${year}`, pageWidth / 2, 25, {
-        align: "center",
-      });
-
-      doc.setFontSize(7.5);
-      doc.setTextColor(180, 215, 245);
-      doc.text(
-        `Ref. No. GSO-${year}-${String(now.getMonth() + 1).padStart(2, "0")}-PROC`,
-        margin,
-        27,
-      );
+      doc.setFontSize(10);
+      doc.text(`Reporting Period: ${monthName} ${year}`, margin, 28);
       doc.text(
         `Generated: ${now.toLocaleDateString("en-PH", {
           year: "numeric",
@@ -1112,570 +1111,71 @@ export function AnalyticsPage() {
           minute: "2-digit",
         })}`,
         pageWidth - margin,
-        27,
+        28,
         { align: "right" },
       );
 
-      // ── KPI CARDS ─────────────────────────────────────────────────────
-      const orderNow = procurementRows.filter(
-        (r) => r.status === "order",
-      ).length;
-      const watchCount = procurementRows.filter(
-        (r) => r.status === "watch",
-      ).length;
-      const okCount = procurementRows.filter((r) => r.status === "ok").length;
-      const totalItems = procurementRows.length;
-
-      const kpiY = 36;
-      const kpiH = 26;
-      const kpiW = (contentWidth - 12) / 4;
-
-      const kpis: {
-        label: string;
-        value: string;
-        sub: string;
-        color: [number, number, number];
-        bg: [number, number, number];
-      }[] = [
-        {
-          label: "Order Now",
-          value: String(orderNow),
-          sub: "Require immediate reorder",
-          color: [220, 53, 53],
-          bg: [255, 245, 245],
-        },
-        {
-          label: "Watch Items",
-          value: String(watchCount),
-          sub: "Monitor stock closely",
-          color: [217, 119, 6],
-          bg: [255, 252, 240],
-        },
-        {
-          label: "OK Items",
-          value: String(okCount),
-          sub: "Sufficient stock on hand",
-          color: [22, 163, 74],
-          bg: [240, 255, 244],
-        },
-        {
-          label: "Total Items Tracked",
-          value: String(totalItems),
-          sub: "In procurement scope",
-          color: [74, 137, 176],
-          bg: [240, 248, 255],
-        },
-      ];
-
-      kpis.forEach((kpi, i) => {
-        const x = margin + i * (kpiW + 3.2);
-        doc.setFillColor(...kpi.bg);
-        doc.setDrawColor(...kpi.color);
-        doc.setLineWidth(0.4);
-        doc.roundedRect(x, kpiY, kpiW, kpiH, 2, 2, "FD");
-        doc.setFillColor(...kpi.color);
-        doc.rect(x, kpiY, kpiW, 3, "F");
-        doc.roundedRect(x, kpiY, kpiW, 3, 2, 2, "F");
-
-        doc.setFont("times", "normal");
-        doc.setFontSize(7.5);
-        doc.setTextColor(100, 100, 100);
-        doc.text(kpi.label, x + kpiW / 2, kpiY + 9.5, { align: "center" });
-
-        doc.setFont("times", "bold");
-        doc.setFontSize(15);
-        doc.setTextColor(...kpi.color);
-        doc.text(kpi.value, x + kpiW / 2, kpiY + 19, { align: "center" });
-
-        doc.setFont("times", "italic");
-        doc.setFontSize(6.5);
-        doc.setTextColor(150, 150, 150);
-        doc.text(kpi.sub, x + kpiW / 2, kpiY + 23.5, { align: "center" });
-      });
-
-      // ── FORECAST STRIP ─────────────────────────────────────────────────
-      const stripY = kpiY + kpiH + 5;
-      doc.setFillColor(248, 250, 253);
-      doc.setDrawColor(210, 220, 230);
-      doc.setLineWidth(0.25);
-      doc.rect(margin, stripY, contentWidth, 15, "FD");
-
-      doc.setFillColor(232, 242, 250);
-      doc.rect(margin, stripY, contentWidth, 5.5, "F");
       doc.setFont("times", "bold");
-      doc.setFontSize(8);
-      doc.setTextColor(74, 137, 176);
-      doc.text("PROCUREMENT SUMMARY", margin + 4, stripY + 4);
+      doc.setFontSize(12);
+      doc.text(
+        "CRITICAL STOCK ITEMS — STOCK AT OR BELOW CRITICAL LEVEL",
+        margin,
+        42,
+      );
 
-      // ── PROCUREMENT TABLE (no cost column) ────────────────────────────
-      const tableStartY = stripY + 19;
-
-      doc.setFont("times", "bold");
-      doc.setFontSize(9.5);
-      doc.setTextColor(50, 50, 50);
-      doc.text("PROCUREMENT ACTION TABLE", margin, tableStartY - 2.5);
-
-      doc.setFont("times", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(220, 53, 53);
-      doc.text("[!] Order Now", pageWidth - margin - 50, tableStartY - 2);
-      doc.setTextColor(217, 119, 6);
-      doc.text("[~] Watch", pageWidth - margin - 28, tableStartY - 2);
-      doc.setTextColor(22, 163, 74);
-      doc.text("[OK]", pageWidth - margin - 8, tableStartY - 2);
-
-      const bodyData = procurementRows.map((row) => {
-        const weeksNum = parseFloat(row.weeksLeft);
-        const weeksColor: [number, number, number] =
-          weeksNum < 2
-            ? [200, 0, 0]
-            : weeksNum < 4
-              ? [180, 100, 0]
-              : [40, 40, 40];
-        const statusLabel =
-          row.status === "order"
-            ? "[!] ORDER NOW"
-            : row.status === "watch"
-              ? "[~] WATCH"
-              : "[OK]";
-        const statusColor: [number, number, number] =
-          row.status === "order"
-            ? [200, 0, 0]
-            : row.status === "watch"
-              ? [180, 100, 0]
-              : [22, 163, 74];
-
-        return [
-          row.description,
-          {
-            content: String(row.currentStock),
-            styles: { halign: "center" as const },
-          },
-          {
-            content: String(row.weeklyBurnRate),
-            styles: { halign: "center" as const },
-          },
-          {
-            content: `${row.weeksLeft} wks`,
-            styles: {
-              halign: "center" as const,
-              fontStyle: "bold" as const,
-              textColor: weeksColor,
-            },
-          },
-          {
-            content: `${row.predDemand} units`,
-            styles: { halign: "center" as const },
-          },
-          {
-            content:
-              row.suggestedOrder > 0 ? `${row.suggestedOrder} pcs` : "--",
-            styles: {
-              halign: "center" as const,
-              fontStyle:
-                row.suggestedOrder > 0
-                  ? ("bold" as const)
-                  : ("normal" as const),
-              textColor:
-                row.suggestedOrder > 0
-                  ? ([200, 0, 0] as [number, number, number])
-                  : ([160, 160, 160] as [number, number, number]),
-            },
-          },
-          {
-            content: statusLabel,
-            styles: {
-              halign: "center" as const,
-              fontStyle: "bold" as const,
-              textColor: statusColor,
-            },
-          },
-        ];
-      });
+      const bodyData = criticalStockItems.map((item: any) => [
+        item.description || item.item_no || "Unknown item",
+        String(item.remaining_stock),
+        item.item_type || "",
+      ]);
 
       autoTable(doc, {
-        startY: tableStartY + 1,
+        startY: 48,
         head: [
           [
-            {
-              content: "Item Description",
-              styles: { halign: "left" as const },
-            },
-            { content: "Stock", styles: { halign: "center" as const } },
-            { content: "Burn / wk", styles: { halign: "center" as const } },
-            { content: "Weeks Left", styles: { halign: "center" as const } },
-            { content: "Pred. Demand", styles: { halign: "center" as const } },
-            {
-              content: "Suggested Order",
-              styles: { halign: "center" as const },
-            },
-            { content: "Status", styles: { halign: "center" as const } },
+            { content: "Item Description", styles: { halign: "left" as const } },
+            { content: "Current Stock", styles: { halign: "center" as const } },
+            { content: "Item Type", styles: { halign: "center" as const } },
           ],
         ],
         body:
           bodyData.length > 0
             ? bodyData
-            : [["No procurement data available", "", "", "", "", "", ""]],
+            : [["No critical stock items found", "", ""]],
         theme: "grid",
         styles: {
-          fontSize: 8,
           font: "times",
-          lineColor: [220, 225, 230],
-          lineWidth: 0.15,
-          textColor: [40, 40, 40],
-          cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 },
+          fontSize: 9,
+          textColor: [0, 0, 0],
+          lineColor: [0, 0, 0],
+          cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
         },
         headStyles: {
-          fillColor: [74, 137, 176],
-          textColor: [255, 255, 255],
+          fillColor: [255, 255, 255],
+          textColor: [0, 0, 0],
           fontStyle: "bold",
-          fontSize: 8.5,
-          cellPadding: { top: 4, bottom: 4, left: 3, right: 3 },
+          lineColor: [0, 0, 0],
         },
-        alternateRowStyles: { fillColor: [248, 251, 253] },
+        alternateRowStyles: { fillColor: [240, 240, 240] },
         columnStyles: {
-          0: { cellWidth: 90 },
-          1: { cellWidth: 18 },
-          2: { cellWidth: 18 },
-          3: { cellWidth: 22 },
-          4: { cellWidth: 24 },
-          5: { cellWidth: 28 },
-          6: { cellWidth: 28 },
+          0: { cellWidth: 120 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 33 },
         },
       });
 
-      // ── PAGE 2: ANALYSIS & INSIGHTS ───────────────────────────────────
-      doc.addPage();
-      doc.setFillColor(74, 137, 176);
-      doc.rect(0, 0, pageWidth, 12, "F");
-      doc.setFont("times", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(255, 255, 255);
-      doc.text("PROCUREMENT ANALYSIS & INSIGHTS", pageWidth / 2, 8, {
-        align: "center",
-      });
-
-      let analyticsY = 18;
-
-      // ── STATUS OVERVIEW ───────────────────────────────────────────────
-      doc.setFont("times", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(50, 50, 50);
-      doc.text("PROCUREMENT STATUS OVERVIEW", margin, analyticsY);
-
-      const statusBoxY = analyticsY + 4;
-      const statusBoxH = 20;
-      const statusBoxW = (contentWidth - 8) / 3;
-
-      const drawStatusBox = (
-        x: number,
-        y: number,
-        w: number,
-        label: string,
-        count: number,
-        color: [number, number, number],
-      ) => {
-        doc.setFillColor(255, 255, 255);
-        doc.setDrawColor(...color);
-        doc.setLineWidth(0.5);
-        doc.rect(x, y, w, statusBoxH, "FD");
-        doc.setFillColor(...color);
-        doc.rect(x, y, w, 4.5, "F");
-        doc.setFont("times", "bold");
-        doc.setFontSize(7);
-        doc.setTextColor(255, 255, 255);
-        doc.text(label, x + 4, y + 3.5);
-        doc.setFont("times", "bold");
-        doc.setFontSize(16);
-        doc.setTextColor(...color);
-        doc.text(String(count), x + w / 2, y + 14.5, { align: "center" });
-        doc.setFont("times", "normal");
-        doc.setFontSize(7);
-        doc.setTextColor(100, 100, 100);
-        doc.text("item" + (count !== 1 ? "s" : ""), x + w / 2, y + 18.5, {
-          align: "center",
-        });
-      };
-
-      drawStatusBox(
-        margin,
-        statusBoxY,
-        statusBoxW,
-        "CRITICAL \u2014 ORDER NOW",
-        orderNow,
-        [220, 53, 53],
-      );
-      drawStatusBox(
-        margin + statusBoxW + 4,
-        statusBoxY,
-        statusBoxW,
-        "WATCH \u2014 MONITOR CLOSELY",
-        watchCount,
-        [217, 119, 6],
-      );
-      drawStatusBox(
-        margin + statusBoxW * 2 + 8,
-        statusBoxY,
-        statusBoxW,
-        "OK \u2014 SUFFICIENT STOCK",
-        okCount,
-        [22, 163, 74],
-      );
-
-      analyticsY = statusBoxY + statusBoxH + 8;
-
-      // ── CRITICAL ITEMS TABLE ──────────────────────────────────────────
-      const criticalItems = procurementRows.filter((r) => r.status === "order");
-      if (criticalItems.length > 0) {
-        doc.setFont("times", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(50, 50, 50);
-        doc.text(
-          "CRITICAL ITEMS \u2014 IMMEDIATE REORDER REQUIRED",
-          margin,
-          analyticsY,
-        );
-
-        const criticalTableData = criticalItems.slice(0, 10).map((row) => [
-          row.description,
-          {
-            content: String(row.currentStock),
-            styles: { halign: "center" as const },
-          },
-          {
-            content: `${row.weeksLeft} wks`,
-            styles: {
-              halign: "center" as const,
-              fontStyle: "bold" as const,
-              textColor: [200, 0, 0] as [number, number, number],
-            },
-          },
-          {
-            content: String(row.weeklyBurnRate),
-            styles: { halign: "center" as const },
-          },
-          {
-            content: `${row.suggestedOrder} pcs`,
-            styles: {
-              halign: "center" as const,
-              fontStyle: "bold" as const,
-              textColor: [200, 0, 0] as [number, number, number],
-            },
-          },
-        ]);
-
-        autoTable(doc, {
-          startY: analyticsY + 4,
-          head: [
-            [
-              {
-                content: "Item Description",
-                styles: { halign: "left" as const },
-              },
-              { content: "Stock", styles: { halign: "center" as const } },
-              { content: "Weeks Left", styles: { halign: "center" as const } },
-              { content: "Burn / wk", styles: { halign: "center" as const } },
-              {
-                content: "Suggested Order",
-                styles: { halign: "center" as const },
-              },
-            ],
-          ],
-          body: criticalTableData,
-          theme: "grid",
-          styles: {
-            fontSize: 8,
-            font: "times",
-            lineColor: [220, 225, 230],
-            textColor: [40, 40, 40],
-            cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
-          },
-          headStyles: {
-            fillColor: [220, 53, 53],
-            textColor: [255, 255, 255],
-            fontStyle: "bold",
-          },
-          alternateRowStyles: { fillColor: [255, 245, 245] },
-          columnStyles: {
-            0: { cellWidth: 120 },
-            1: { cellWidth: 20 },
-            2: { cellWidth: 24 },
-            3: { cellWidth: 22 },
-            4: { cellWidth: 30 },
-          },
-        });
-
-        analyticsY = (doc as any).lastAutoTable.finalY + 7;
-      }
-
-      // ── WATCH ITEMS TABLE ─────────────────────────────────────────────
-      const watchItems = procurementRows.filter((r) => r.status === "watch");
-      if (watchItems.length > 0 && analyticsY < pageHeight - 60) {
-        doc.setFont("times", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(50, 50, 50);
-        doc.text("WATCH ITEMS \u2014 MONITOR CLOSELY", margin, analyticsY);
-
-        const watchTableData = watchItems.map((row) => [
-          row.description,
-          {
-            content: String(row.currentStock),
-            styles: { halign: "center" as const },
-          },
-          {
-            content: `${row.weeksLeft} wks`,
-            styles: {
-              halign: "center" as const,
-              fontStyle: "bold" as const,
-              textColor: [180, 100, 0] as [number, number, number],
-            },
-          },
-          {
-            content: String(row.weeklyBurnRate),
-            styles: { halign: "center" as const },
-          },
-          {
-            content: `${row.predDemand} units`,
-            styles: { halign: "center" as const },
-          },
-        ]);
-
-        autoTable(doc, {
-          startY: analyticsY + 4,
-          head: [
-            [
-              {
-                content: "Item Description",
-                styles: { halign: "left" as const },
-              },
-              { content: "Stock", styles: { halign: "center" as const } },
-              { content: "Weeks Left", styles: { halign: "center" as const } },
-              { content: "Burn / wk", styles: { halign: "center" as const } },
-              {
-                content: "Pred. Demand",
-                styles: { halign: "center" as const },
-              },
-            ],
-          ],
-          body: watchTableData,
-          theme: "grid",
-          styles: {
-            fontSize: 8,
-            font: "times",
-            lineColor: [220, 225, 230],
-            textColor: [40, 40, 40],
-            cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
-          },
-          headStyles: {
-            fillColor: [217, 119, 6],
-            textColor: [255, 255, 255],
-            fontStyle: "bold",
-          },
-          alternateRowStyles: { fillColor: [255, 252, 240] },
-          columnStyles: {
-            0: { cellWidth: 120 },
-            1: { cellWidth: 20 },
-            2: { cellWidth: 24 },
-            3: { cellWidth: 22 },
-            4: { cellWidth: 30 },
-          },
-        });
-
-        analyticsY = (doc as any).lastAutoTable.finalY + 7;
-      }
-
-      // ── FORECAST & INVENTORY SUMMARY ──────────────────────────────────
-      if (analyticsY < pageHeight - 50) {
-        doc.setFont("times", "bold");
-        doc.setFontSize(10);
-        doc.setTextColor(50, 50, 50);
-        doc.text("INVENTORY ANALYSIS", margin, analyticsY);
-
-        const summaryY = analyticsY + 4;
-        const summaryBoxW = (contentWidth - 6) / 2;
-        const summaryBoxH = 28;
-
-        // Inventory stats box (only, removed forecast box)
-        doc.setFillColor(240, 248, 255);
-        doc.setDrawColor(22, 163, 74);
-        doc.setLineWidth(0.3);
-        doc.roundedRect(
-          margin + summaryBoxW + 6,
-          summaryY,
-          summaryBoxW,
-          summaryBoxH,
-          2,
-          2,
-          "FD",
-        );
-        doc.setFillColor(22, 163, 74);
-        doc.roundedRect(
-          margin + summaryBoxW + 6,
-          summaryY,
-          summaryBoxW,
-          5.5,
-          2,
-          2,
-          "F",
-        );
-        doc.rect(margin + summaryBoxW + 6, summaryY + 3.5, summaryBoxW, 2, "F");
-        doc.setFont("times", "bold");
-        doc.setFontSize(8);
-        doc.setTextColor(255, 255, 255);
-        doc.text("INVENTORY METRICS", margin + summaryBoxW + 9, summaryY + 4.5);
-        doc.setFont("times", "normal");
-        doc.setFontSize(7.5);
-        doc.setTextColor(60, 60, 60);
-        doc.text(
-          `Total items in scope: ${procurementRows.length}`,
-          margin + summaryBoxW + 9,
-          summaryY + 11,
-        );
-        doc.text(
-          `Mean burn rate: ${inventoryStats?.meanBurnRate?.toFixed(2) ?? "--"} units/wk`,
-          margin + summaryBoxW + 9,
-          summaryY + 16,
-        );
-        doc.text(
-          `Burn rate std. deviation: ${inventoryStats?.burnRateStdDev?.toFixed(2) ?? "--"}`,
-          margin + summaryBoxW + 9,
-          summaryY + 21,
-        );
-        doc.text(
-          `High-burn outlier items: ${inventoryStats?.highBurnOutliers ?? 0}`,
-          margin + summaryBoxW + 9,
-          summaryY + 26,
-        );
-
-        analyticsY = summaryY + summaryBoxH + 7;
-      }
-
-      // ── FOOTER (all pages) ────────────────────────────────────────────
       const totalPages = (doc as any).internal.pages.length - 1;
       for (let p = 1; p <= totalPages; p++) {
         doc.setPage(p);
-        doc.setFillColor(47, 100, 136);
-        doc.rect(0, pageHeight - 8, pageWidth, 8, "F");
         doc.setFont("times", "normal");
-        doc.setFontSize(7.5);
-        doc.setTextColor(210, 235, 255);
-        doc.text(
-          "FacilityLink  \u00B7  Centralized Inventory System  \u00B7  PLM General Services Office",
-          pageWidth / 2,
-          pageHeight - 2.8,
-          { align: "center" },
-        );
-        doc.setTextColor(255, 255, 255);
-        doc.text(
-          `Page ${p} of ${totalPages}`,
-          pageWidth - margin,
-          pageHeight - 2.8,
-          { align: "right" },
-        );
-        doc.text(`${monthName} ${year}`, margin, pageHeight - 2.8);
+        doc.setFontSize(8);
+        doc.text(`Page ${p} of ${totalPages}`, pageWidth - margin, pageHeight - 8, {
+          align: "right",
+        });
+        doc.text(`${monthName} ${year}`, margin, pageHeight - 8);
       }
 
-      doc.save(`Procurement_Summary_${monthName}_${year}.pdf`);
+      doc.save(`Procurement_Critical_Stock_${monthName}_${year}.pdf`);
       toast.success("Procurement Summary Downloaded!");
     } catch (err) {
       toast.error("Failed to generate procurement summary.");
@@ -3244,6 +2744,16 @@ export function AnalyticsPage() {
                   {generating === "Weekly"
                     ? "Generating..."
                     : "Download Weekly RIS"}
+                </button>
+                <button
+                  onClick={printProcurementSummary}
+                  disabled={generating !== null}
+                  className="w-full flex items-center justify-center gap-2 bg-white text-[#3776A0] py-2.5 rounded font-bold hover:bg-gray-50 transition-colors mt-3 shadow-sm disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  {generating === "Procurement"
+                    ? "Generating..."
+                    : "Print Procurement Summary"}
                 </button>
               </div>
 
