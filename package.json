@@ -3,11 +3,12 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "scripts": {
-    "build": "vite build",
-    "dev": "vite"
-  },
-  "dependencies": {
+"scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --port 5173"
+  },  
+    "dependencies": {
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",
