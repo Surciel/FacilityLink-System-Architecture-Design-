@@ -73,7 +73,7 @@ export function InboxPage() {
   });
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(10);
   const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const subscriptionRef = useRef<ReturnType<typeof supabase.channel> | null>(
     null,
@@ -97,103 +97,113 @@ export function InboxPage() {
   }, [navigate]);
 
   useEffect(() => {
-      fetchRequests(); // Initial load only
+    fetchRequests(); // Initial load only
 
-      // Unsubscribe from previous subscription if it exists
+    // Unsubscribe from previous subscription if it exists
+    if (subscriptionRef.current) {
+      subscriptionRef.current.unsubscribe();
+    }
+
+    // Set up ultra-efficient real-time state mutation
+    const subscription = supabase
+      .channel("requests-channel")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "requests",
+        },
+        async (payload) => {
+          if (payload.eventType === "INSERT") {
+            // Memory-Efficient: Fetch ONLY the missing joined data for this specific new row
+            const { data: newReq, error } = await supabase
+              .from("requests")
+              .select(
+                "pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, status, inventory(description, unit_id, units(name))",
+              )
+              .eq("pkid", payload.new.pkid)
+              .single();
+
+            if (newReq && !error) {
+              setGroupedRequests((prev) => {
+                const groupKey = newReq.request_group_id || newReq.pkid;
+                const existingGroupIndex = prev.findIndex(
+                  (g) => g.group_id === groupKey,
+                );
+
+                if (existingGroupIndex >= 0) {
+                  // Append to existing group (e.g., when a user requests 5 items at once)
+                  const updatedGroups = [...prev];
+                  updatedGroups[existingGroupIndex] = {
+                    ...updatedGroups[existingGroupIndex],
+                    items: [...updatedGroups[existingGroupIndex].items, newReq],
+                  };
+                  return updatedGroups;
+                } else {
+                  // Create a brand new group at the very top of the inbox
+                  const newGroup: GroupedRequest = {
+                    group_id: groupKey,
+                    requested_by: newReq.requested_by,
+                    department: newReq.department,
+                    created_at: newReq.created_at,
+                    requester_type: newReq.requester_type,
+                    requester_info: newReq.requester_info,
+                    status: newReq.status || "pending",
+                    items: [newReq],
+                  };
+                  return [newGroup, ...prev];
+                }
+              });
+            }
+          } else if (payload.eventType === "UPDATE") {
+            // Memory-Efficient: Update state directly without ANY database reads
+            setGroupedRequests((prev) => {
+              // If the request was rejected, remove it from the inbox entirely
+              if (payload.new.status === "rejected") {
+                return prev.filter(
+                  (group) =>
+                    !group.items.some((item) => item.pkid === payload.new.pkid),
+                );
+              }
+
+              // Otherwise, update the status of the matching group
+              return prev.map((group) => {
+                const hasItem = group.items.some(
+                  (item) => item.pkid === payload.new.pkid,
+                );
+                if (hasItem) {
+                  return { ...group, status: payload.new.status };
+                }
+                return group;
+              });
+            });
+          } else if (payload.eventType === "DELETE") {
+            // Safely remove deleted items from the UI
+            setGroupedRequests((prev) =>
+              prev.filter(
+                (group) =>
+                  !group.items.some((item) => item.pkid === payload.old.pkid),
+              ),
+            );
+          }
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("Inbox real-time subscription active");
+        }
+      });
+
+    subscriptionRef.current = subscription;
+
+    // Cleanup subscription on unmount
+    return () => {
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
       }
-
-      // Set up ultra-efficient real-time state mutation
-      const subscription = supabase
-        .channel("requests-channel")
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "requests",
-          },
-          async (payload) => {
-            if (payload.eventType === "INSERT") {
-              // Memory-Efficient: Fetch ONLY the missing joined data for this specific new row
-              const { data: newReq, error } = await supabase
-                .from("requests")
-                .select("pkid, requested_by, department, item_no, quantity_requested, created_at, request_group_id, requester_type, requester_info, status, inventory(description, unit_id, units(name))")
-                .eq("pkid", payload.new.pkid)
-                .single();
-
-              if (newReq && !error) {
-                setGroupedRequests((prev) => {
-                  const groupKey = newReq.request_group_id || newReq.pkid;
-                  const existingGroupIndex = prev.findIndex((g) => g.group_id === groupKey);
-
-                  if (existingGroupIndex >= 0) {
-                    // Append to existing group (e.g., when a user requests 5 items at once)
-                    const updatedGroups = [...prev];
-                    updatedGroups[existingGroupIndex] = {
-                      ...updatedGroups[existingGroupIndex],
-                      items: [...updatedGroups[existingGroupIndex].items, newReq],
-                    };
-                    return updatedGroups;
-                  } else {
-                    // Create a brand new group at the very top of the inbox
-                    const newGroup: GroupedRequest = {
-                      group_id: groupKey,
-                      requested_by: newReq.requested_by,
-                      department: newReq.department,
-                      created_at: newReq.created_at,
-                      requester_type: newReq.requester_type,
-                      requester_info: newReq.requester_info,
-                      status: newReq.status || "pending",
-                      items: [newReq],
-                    };
-                    return [newGroup, ...prev];
-                  }
-                });
-              }
-            } else if (payload.eventType === "UPDATE") {
-              // Memory-Efficient: Update state directly without ANY database reads
-              setGroupedRequests((prev) => {
-                // If the request was rejected, remove it from the inbox entirely
-                if (payload.new.status === "rejected") {
-                  return prev.filter(
-                    (group) => !group.items.some((item) => item.pkid === payload.new.pkid)
-                  );
-                }
-
-                // Otherwise, update the status of the matching group
-                return prev.map((group) => {
-                  const hasItem = group.items.some((item) => item.pkid === payload.new.pkid);
-                  if (hasItem) {
-                    return { ...group, status: payload.new.status };
-                  }
-                  return group;
-                });
-              });
-            } else if (payload.eventType === "DELETE") {
-              // Safely remove deleted items from the UI
-              setGroupedRequests((prev) => 
-                prev.filter((group) => !group.items.some((item) => item.pkid === payload.old.pkid))
-              );
-            }
-          }
-        )
-        .subscribe((status) => {
-          if (status === "SUBSCRIBED") {
-            console.log("Inbox real-time subscription active");
-          }
-        });
-
-      subscriptionRef.current = subscription;
-
-      // Cleanup subscription on unmount
-      return () => {
-        if (subscriptionRef.current) {
-          subscriptionRef.current.unsubscribe();
-        }
-      };
-    }, []);
+    };
+  }, []);
 
   useEffect(() => {
     if (!loading && groupedRequests.length > 0) {
@@ -233,7 +243,7 @@ export function InboxPage() {
     setCurrentPage(1);
   }, [searchQuery, sortOption]);
 
-const fetchRequests = async () => {
+  const fetchRequests = async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from("requests")
@@ -243,7 +253,7 @@ const fetchRequests = async () => {
       .neq("status", "rejected") // 1. Filter out rejected items at the database level
       .order("created_at", { ascending: false })
       .limit(500); // 2. Place a hard ceiling to prevent browser crashes
-      
+
     if (error) {
       toast.error("Failed to load requests");
       console.error(error);
@@ -593,9 +603,7 @@ const fetchRequests = async () => {
                       className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
                     >
                       <option value={10}>10</option>
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                      <option value={100}>100</option>
+                      <option value={20}>20</option>
                     </select>
                   </div>
 

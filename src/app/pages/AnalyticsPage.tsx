@@ -134,6 +134,10 @@ export function AnalyticsPage() {
     "all" | "consumable" | "borrowable"
   >("all");
   const [topRequestedItems, setTopRequestedItems] = useState<any[]>([]);
+  const [trendPage, setTrendPage] = useState(1);
+  const [trendPageSize, setTrendPageSize] = useState<5 | 10 | 20>(5);
+  const [trendSearch, setTrendSearch] = useState<string>("");
+  const [trendTotalPages, setTrendTotalPages] = useState(1);
   const [departmentActivity, setDepartmentActivity] = useState<any[]>([]);
   const [departmentFilter, setDepartmentFilter] = useState<
     "all" | "colleges" | "offices"
@@ -321,6 +325,19 @@ export function AnalyticsPage() {
     });
   }, [topRequestedItems]);
 
+  const filteredTrendItems = useMemo(() => {
+    const query = trendSearch.trim().toLowerCase();
+    if (!query) return topRequestedItems;
+    return topRequestedItems.filter((item) =>
+      item.name.toLowerCase().includes(query),
+    );
+  }, [topRequestedItems, trendSearch]);
+
+  const paginatedTrendItems = useMemo(() => {
+    const start = (trendPage - 1) * trendPageSize;
+    return filteredTrendItems.slice(start, start + trendPageSize);
+  }, [filteredTrendItems, trendPage, trendPageSize]);
+
   // ── Department activity with simple forecast + filtering ───────────────────
   const deptData = useMemo(() => {
     if (!departmentActivity.length) return [];
@@ -392,6 +409,15 @@ export function AnalyticsPage() {
   useEffect(() => {
     setVelocityPageInput(String(velocityPage));
   }, [velocityPage]);
+
+  useEffect(() => {
+    const pages = Math.max(
+      1,
+      Math.ceil(filteredTrendItems.length / trendPageSize),
+    );
+    setTrendTotalPages(pages);
+    if (trendPage > pages) setTrendPage(pages);
+  }, [filteredTrendItems, trendPageSize, trendPage]);
 
   useEffect(() => {
     // Update procurement table data when page changes
@@ -570,18 +596,21 @@ export function AnalyticsPage() {
     setTopRequestedItems(
       Object.entries(positiveThisMonthCounts)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
         .map(([name, requests]) => {
-          const lastMonthValue = lastMonthCounts[name] || 0;
+          const previousMonthRequests = lastMonthCounts[name] || 0;
           const trendValue =
-            lastMonthValue > 0
-              ? Math.round(((requests - lastMonthValue) / lastMonthValue) * 100)
+            previousMonthRequests > 0
+              ? Math.round(
+                  ((requests - previousMonthRequests) / previousMonthRequests) *
+                    100,
+                )
               : 0;
-          const isNew = lastMonthValue === 0;
+          const isNew = previousMonthRequests === 0;
           const isHighVolume = requests >= 10;
           return {
             name,
             requests,
+            previousMonthRequests,
             trend: trendValue,
             isNew,
             trendLabel: isNew
@@ -2533,142 +2562,158 @@ export function AnalyticsPage() {
             </div>
           </div>
 
-          {/* Charts */}
           <div className="space-y-6">
-            {/* Categorized Asset Analytics */}
+            {/* Item Trend Analysis */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <h3 className="text-xl font-bold text-gray-900">
-                Categorized Asset Analytics
+                Item Trend Analysis
               </h3>
-              <p className="text-sm text-gray-600 mt-1 mb-6">
-                Consumables vs Borrowables/Returnables Analysis
+              <p className="text-sm text-gray-600 mt-1 mb-4">
+                Top requested items with trend analysis
               </p>
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <h4 className="font-semibold text-gray-900 text-base flex items-center gap-2 mb-4">
-                    <span className="w-3 h-3 rounded-full bg-blue-500"></span>
-                    Consumable Burn Rate
-                  </h4>
-                  {consumableBurnRate.length > 0 ? (
-                    <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                      {consumableBurnRate.slice(0, 5).map((item, index) => (
+              {topRequestedItems.length > 0 ? (
+                <>
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-5">
+                    <div className="text-sm text-gray-500">
+                      Showing {paginatedTrendItems.length} of {topRequestedItems.length} items
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <label className="text-sm text-gray-600">Search:</label>
+                        <input
+                          type="text"
+                          placeholder="Search item"
+                          value={trendSearch}
+                          onChange={(e) => {
+                            setTrendSearch(e.target.value);
+                            setTrendPage(1);
+                          }}
+                          className="w-72 min-w-[260px] px-3 py-2 border rounded-lg text-sm bg-white text-gray-900 outline-none"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <label className="text-sm text-gray-600">Show:</label>
+                        <select
+                          value={trendPageSize}
+                          onChange={(e) => {
+                            setTrendPageSize(Number(e.target.value) as 5 | 10 | 20);
+                            setTrendPage(1);
+                          }}
+                          className="px-3 py-2 border rounded-lg text-sm bg-white text-gray-900 outline-none"
+                        >
+                          <option value={5}>5</option>
+                          <option value={10}>10</option>
+                          <option value={20}>20</option>
+                        </select>
+                      </div>
+                      <div className="inline-flex items-center gap-2 text-sm text-gray-700">
+                        <button
+                          type="button"
+                          onClick={() => setTrendPage((prev) => Math.max(1, prev - 1))}
+                          disabled={trendPage === 1}
+                          className="px-3 py-2 rounded-lg border bg-white disabled:opacity-50"
+                        >
+                          ←
+                        </button>
+                        <span>
+                          Page {trendPage} of {trendTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setTrendPage((prev) => Math.min(trendTotalPages, prev + 1))}
+                          disabled={trendPage === trendTotalPages}
+                          className="px-3 py-2 rounded-lg border bg-white disabled:opacity-50"
+                        >
+                          →
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {paginatedTrendItems.map((item, index) => {
+                      const statusColor = item.isNew
+                        ? "blue"
+                        : item.adviceType === "increase"
+                          ? "orange"
+                          : item.trend > 0
+                            ? "green"
+                            : "gray";
+                      const statusBgColor = {
+                        blue: "bg-blue-50 border-blue-200",
+                        orange: "bg-orange-50 border-orange-200",
+                        green: "bg-green-50 border-green-200",
+                        gray: "bg-gray-50 border-gray-200",
+                      }[statusColor];
+                      const trendBadgeColor = {
+                        blue: "bg-blue-100 text-blue-700",
+                        orange: "bg-orange-100 text-orange-700",
+                        green: "bg-green-100 text-green-700",
+                        gray: "bg-gray-100 text-gray-700",
+                      }[statusColor];
+
+                      return (
                         <div
                           key={index}
-                          className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-3 border border-blue-200"
+                          className={`p-5 border rounded-lg transition-all hover:shadow-md ${statusBgColor}`}
                         >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <h5 className="font-semibold text-gray-900 text-xs">
-                                {item.description}
-                              </h5>
-                            </div>
-                            <TrendingDown className="w-4 h-4 text-red-500 flex-shrink-0" />
-                          </div>
-                          <div className="grid grid-cols-3 gap-1 mt-2">
-                            <div className="bg-white rounded p-1.5">
-                              <p className="text-xs text-gray-600">
-                                Weekly Rate
-                              </p>
-                              <p className="text-sm font-bold text-blue-600">
-                                {item.weeklyBurnRate}
-                              </p>
-                            </div>
-                            <div className="bg-white rounded p-1.5">
-                              <p className="text-xs text-gray-600">
-                                Current Stock
-                              </p>
-                              <p className="text-sm font-bold text-gray-900">
-                                {item.currentStock}
-                              </p>
-                            </div>
-                            <div className="bg-white rounded p-1.5">
-                              <p className="text-xs text-gray-600">
-                                Weeks Left
-                              </p>
-                              <p className="text-sm font-bold text-orange-600">
-                                {item.weeksUntilStockout !== null
-                                  ? item.weeksUntilStockout
-                                  : "N/A"}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="mt-2 p-1.5 bg-white rounded text-xs text-gray-700">
-                            <strong>Action:</strong> {item.recommendation}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="h-40 flex items-center justify-center text-gray-400">
-                      No consumable data available
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-3">
-                  <h4 className="font-semibold text-gray-900 text-base flex items-center gap-2 mb-4">
-                    <span className="w-3 h-3 rounded-full bg-green-500"></span>
-                    Borrowable Utilization
-                  </h4>
-                  {borrowableUtilization.length > 0 ? (
-                    <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                      {borrowableUtilization.slice(0, 5).map((item, index) => (
-                        <div
-                          key={index}
-                          className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3 border border-green-200"
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <h5 className="font-semibold text-gray-900 text-xs">
-                                {item.description}
-                              </h5>
-                              <p className="text-xs text-gray-600 mt-1">
-                                Requests:{" "}
-                                <span className="font-bold text-green-600">
-                                  {item.totalRequests}
+                          <div className="flex items-center justify-between gap-3 mb-4">
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-bold text-gray-900 text-sm leading-tight truncate">
+                                {item.name}
+                              </h4>
+                              <div className="text-xl font-bold text-[#4A89B0] mt-1">
+                                {item.requests}
+                                <span className="text-xs font-normal text-gray-600 ml-1">
+                                  this month
                                 </span>
-                              </p>
+                              </div>
+                              <div className="text-sm text-gray-500 mt-1">
+                                Last month: {item.previousMonthRequests}
+                              </div>
                             </div>
-                            <Activity className="w-4 h-4 text-green-600 flex-shrink-0" />
-                          </div>
-                          <div className="grid grid-cols-3 gap-1 mt-2">
-                            <div className="bg-white rounded p-1.5">
-                              <p className="text-xs text-gray-600">
-                                Utilization %
-                              </p>
-                              <p className="text-sm font-bold text-green-600">
-                                {item.utilizationPercentage}%
-                              </p>
-                            </div>
-                            <div className="bg-white rounded p-1.5">
-                              <p className="text-xs text-gray-600">In Stock</p>
-                              <p className="text-sm font-bold text-gray-900">
-                                {item.currentStock}
-                              </p>
-                            </div>
-                            <div className="bg-white rounded p-1.5">
-                              <p className="text-xs text-gray-600">Status</p>
-                              <p className="text-xs font-bold text-green-600">
-                                {item.utilizationPercentage < 5
-                                  ? "Low"
-                                  : item.utilizationPercentage > 20
-                                    ? "High"
-                                    : "Good"}
-                              </p>
+                            <div
+                              className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${trendBadgeColor}`}
+                            >
+                              {item.trend > 0 ? (
+                                <TrendingUp className="w-3.5 h-3.5" />
+                              ) : (
+                                <TrendingDown className="w-3.5 h-3.5" />
+                              )}
+                              {item.trendLabel}
                             </div>
                           </div>
-                          <div className="mt-2 p-1.5 bg-white rounded text-xs text-gray-700">
-                            <strong>Insight:</strong> {item.recommendation}
+                          <div
+                            className={`mt-4 p-3 rounded-lg text-xs flex items-start gap-2.5 ${
+                              item.adviceType === "new"
+                                ? "bg-blue-100 text-blue-800"
+                                : item.adviceType === "increase"
+                                  ? "bg-orange-100 text-orange-800"
+                                  : item.adviceType === "monitor"
+                                    ? "bg-amber-100 text-amber-800"
+                                    : "bg-gray-100 text-gray-700"
+                            }`}
+                          >
+                            <span className="text-base flex-shrink-0 leading-none mt-0.5">
+                              {item.adviceType === "increase"
+                                ? "⚠️"
+                                : item.adviceType === "new"
+                                  ? "✨"
+                                  : item.adviceType === "monitor"
+                                    ? "👁️"
+                                    : "✓"}
+                            </span>
+                            <span className="leading-snug">{item.advice}</span>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="h-40 flex items-center justify-center text-gray-400">
-                      No borrowable utilization data available
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="py-12 flex items-center justify-center text-gray-400">
+                  No trend data available
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Fast-Moving Items Chart — WITH FORECAST BAR */}
@@ -3092,100 +3137,6 @@ export function AnalyticsPage() {
             )}
           </div>
 
-          {/* Item Trend Analysis */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h3 className="text-xl font-bold text-gray-900">
-              Item Trend Analysis
-            </h3>
-            <p className="text-sm text-gray-600 mt-1 mb-6">
-              Top requested items with trend analysis
-            </p>
-            {topRequestedItems.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {topRequestedItems.map((item, index) => {
-                  const statusColor = item.isNew
-                    ? "blue"
-                    : item.adviceType === "increase"
-                      ? "orange"
-                      : item.trend > 0
-                        ? "green"
-                        : "gray";
-                  const statusBgColor = {
-                    blue: "bg-blue-50 border-blue-200",
-                    orange: "bg-orange-50 border-orange-200",
-                    green: "bg-green-50 border-green-200",
-                    gray: "bg-gray-50 border-gray-200",
-                  }[statusColor];
-                  const trendBadgeColor = {
-                    blue: "bg-blue-100 text-blue-700",
-                    orange: "bg-orange-100 text-orange-700",
-                    green: "bg-green-100 text-green-700",
-                    gray: "bg-gray-100 text-gray-700",
-                  }[statusColor];
-
-                  return (
-                    <div
-                      key={index}
-                      className={`p-5 border rounded-lg transition-all hover:shadow-md ${statusBgColor}`}
-                    >
-                      {/* Header with title, request count, and trend */}
-                      <div className="flex items-center justify-between gap-3 mb-4">
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-bold text-gray-900 text-sm leading-tight truncate">
-                            {item.name}
-                          </h4>
-                          <div className="text-xl font-bold text-[#4A89B0] mt-1">
-                            {item.requests}
-                            <span className="text-xs font-normal text-gray-600 ml-1">
-                              this month
-                            </span>
-                          </div>
-                        </div>
-                        <div
-                          className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${trendBadgeColor}`}
-                        >
-                          {item.trend > 0 ? (
-                            <TrendingUp className="w-3.5 h-3.5" />
-                          ) : (
-                            <TrendingDown className="w-3.5 h-3.5" />
-                          )}
-                          {item.trendLabel}
-                        </div>
-                      </div>
-
-                      {/* Status/Advice badge */}
-                      <div
-                        className={`p-3 rounded-lg text-xs flex items-start gap-2.5 ${
-                          item.adviceType === "new"
-                            ? "bg-blue-100 text-blue-800"
-                            : item.adviceType === "increase"
-                              ? "bg-orange-100 text-orange-800"
-                              : item.adviceType === "monitor"
-                                ? "bg-amber-100 text-amber-800"
-                                : "bg-gray-100 text-gray-700"
-                        }`}
-                      >
-                        <span className="text-base flex-shrink-0 leading-none mt-0.5">
-                          {item.adviceType === "increase"
-                            ? "⚠️"
-                            : item.adviceType === "new"
-                              ? "✨"
-                              : item.adviceType === "monitor"
-                                ? "👁️"
-                                : "✓"}
-                        </span>
-                        <span className="leading-snug">{item.advice}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="py-12 flex items-center justify-center text-gray-400">
-                No trend data available
-              </div>
-            )}
-          </div>
 
           {/* Report Generation */}
           <div className="bg-gradient-to-br from-[#5891B8] to-[#3776A0] rounded-xl shadow-lg p-8 text-white">

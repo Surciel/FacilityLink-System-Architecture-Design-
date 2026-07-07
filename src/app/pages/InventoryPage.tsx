@@ -73,6 +73,8 @@ export function InventoryPage() {
     | "id-az"
     | "id-za"
   >("name-az");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<10 | 20>(10);
   const [showRestockModal, setShowRestockModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
@@ -355,8 +357,10 @@ export function InventoryPage() {
       unit_id: newItem.unit_id,
       remaining_stock:
         newItem.remaining_stock === "" ? 0 : newItem.remaining_stock,
-      critical_stock: newItem.critical_stock === "" ? 0 : newItem.critical_stock,
-      stock_threshold: newItem.stock_threshold === "" ? 0 : newItem.stock_threshold,
+      critical_stock:
+        newItem.critical_stock === "" ? 0 : newItem.critical_stock,
+      stock_threshold:
+        newItem.stock_threshold === "" ? 0 : newItem.stock_threshold,
     });
 
     if (error) {
@@ -758,18 +762,9 @@ export function InventoryPage() {
     setItemIdExists(false);
     setEditingItem({
       ...item,
-      remaining_stock:
-        item.remaining_stock === 0
-          ? ""
-          : item.remaining_stock,
-      critical_stock:
-        item.critical_stock === 0
-          ? ""
-          : item.critical_stock,
-      stock_threshold:
-        item.stock_threshold === 0
-          ? ""
-          : item.stock_threshold,
+      remaining_stock: item.remaining_stock === 0 ? "" : item.remaining_stock,
+      critical_stock: item.critical_stock === 0 ? "" : item.critical_stock,
+      stock_threshold: item.stock_threshold === 0 ? "" : item.stock_threshold,
     } as EditableInventoryItem);
     setShowEditModal(true);
   };
@@ -818,52 +813,52 @@ export function InventoryPage() {
     }
   };
 
-const getStockStatus = (item: InventoryItem) => {
-  if (item.critical_stock === undefined || item.critical_stock === null) {
+  const getStockStatus = (item: InventoryItem) => {
+    if (item.critical_stock === undefined || item.critical_stock === null) {
+      return {
+        label: "Unknown",
+        color: "text-gray-600 bg-gray-50",
+        icon: Package,
+      };
+    }
+
+    const currentStock = item.remaining_stock;
+    const critical = item.critical_stock; // may be 0 — that's valid
+    const threshold = item.stock_threshold ?? 0;
+
+    // At or below the emergency floor
+    if (currentStock <= critical) {
+      return {
+        label: "Critical",
+        color: "text-red-600 bg-red-50",
+        icon: AlertTriangle,
+      };
+    }
+
+    // Between critical and the early-warning threshold
+    if (threshold > 0 && currentStock <= threshold) {
+      return {
+        label: "Low",
+        color: "text-orange-600 bg-orange-50",
+        icon: TrendingDown,
+      };
+    }
+
+    // Just above threshold — getting there
+    if (threshold > 0 && currentStock <= threshold * 1.5) {
+      return {
+        label: "Stable",
+        color: "text-blue-600 bg-blue-50",
+        icon: Package,
+      };
+    }
+
     return {
-      label: "Unknown",
-      color: "text-gray-600 bg-gray-50",
-      icon: Package,
+      label: "Adequate",
+      color: "text-green-600 bg-green-50",
+      icon: TrendingUp,
     };
-  }
- 
-  const currentStock = item.remaining_stock;
-  const critical  = item.critical_stock;           // may be 0 — that's valid
-  const threshold = item.stock_threshold ?? 0;
- 
-  // At or below the emergency floor
-  if (currentStock <= critical) {
-    return {
-      label: "Critical",
-      color: "text-red-600 bg-red-50",
-      icon: AlertTriangle,
-    };
-  }
- 
-  // Between critical and the early-warning threshold
-  if (threshold > 0 && currentStock <= threshold) {
-    return {
-      label: "Low",
-      color: "text-orange-600 bg-orange-50",
-      icon: TrendingDown,
-    };
-  }
- 
-  // Just above threshold — getting there
-  if (threshold > 0 && currentStock <= threshold * 1.5) {
-    return {
-      label: "Stable",
-      color: "text-blue-600 bg-blue-50",
-      icon: Package,
-    };
-  }
- 
-  return {
-    label: "Adequate",
-    color: "text-green-600 bg-green-50",
-    icon: TrendingUp,
   };
-};
   // Extract item prefix for category filtering
   const getItemPrefix = (itemNo: string): string => {
     if (itemNo.startsWith("GYM-S")) return "GYM";
@@ -889,16 +884,20 @@ const getStockStatus = (item: InventoryItem) => {
     return matchesSearch && matchesUnit && matchesPrefix;
   });
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, categoryFilter, prefixFilter, sortOption, pageSize]);
+
   const totalItems = inventory.reduce(
     (sum, item) => sum + item.remaining_stock,
     0,
   );
   const lowStockCount = inventory.filter(
-  (item) =>
-    item.critical_stock !== undefined &&
-    item.critical_stock !== null &&
-    item.remaining_stock <= item.critical_stock,
-).length;
+    (item) =>
+      item.critical_stock !== undefined &&
+      item.critical_stock !== null &&
+      item.remaining_stock <= item.critical_stock,
+  ).length;
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -950,6 +949,28 @@ const getStockStatus = (item: InventoryItem) => {
         return sorted;
     }
   };
+
+  const sortedFilteredInventory = getSortedInventory(filteredInventory);
+  const inventoryTotalPages = Math.max(
+    1,
+    Math.ceil(sortedFilteredInventory.length / pageSize),
+  );
+  const inventoryStartIndex = (currentPage - 1) * pageSize;
+  const inventoryEndIndex = inventoryStartIndex + pageSize;
+  const paginatedInventory = sortedFilteredInventory.slice(
+    inventoryStartIndex,
+    inventoryEndIndex,
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, categoryFilter, prefixFilter, sortOption, pageSize]);
+
+  useEffect(() => {
+    if (currentPage > inventoryTotalPages) {
+      setCurrentPage(inventoryTotalPages);
+    }
+  }, [currentPage, inventoryTotalPages]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1069,85 +1090,141 @@ const getStockStatus = (item: InventoryItem) => {
               </div>
             </div>
 
-            {/* Filters */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Search
-                  </label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search by item name or ID..."
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
-                    />
+            {/* Filters + Top Pagination */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Search
+                    </label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search by item name or ID..."
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Category
+                    </label>
+                    <select
+                      value={prefixFilter}
+                      onChange={(e) => setPrefixFilter(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
+                    >
+                      <option value="all">All Items</option>
+                      <option value="JMS">JMS</option>
+                      <option value="GYM">GYM</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Unit
+                    </label>
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
+                    >
+                      <option value="all">All Units</option>
+                      {categories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Sort By
+                    </label>
+                    <select
+                      value={sortOption}
+                      onChange={(e) =>
+                        setSortOption(
+                          e.target.value as
+                            | "name-az"
+                            | "name-za"
+                            | "unit-az"
+                            | "unit-za"
+                            | "stock-high"
+                            | "stock-low"
+                            | "id-az"
+                            | "id-za",
+                        )
+                      }
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
+                    >
+                      <option value="name-az">Name (A-Z)</option>
+                      <option value="name-za">Name (Z-A)</option>
+                      <option value="unit-az">Unit (A-Z)</option>
+                      <option value="unit-za">Unit (Z-A)</option>
+                      <option value="stock-high">Stock (High)</option>
+                      <option value="stock-low">Stock (Low)</option>
+                      <option value="id-az">Item ID (A-Z)</option>
+                      <option value="id-za">Item ID (Z-A)</option>
+                    </select>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Category
-                  </label>
-                  <select
-                    value={prefixFilter}
-                    onChange={(e) => setPrefixFilter(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
-                  >
-                    <option value="all">All Items</option>
-                    <option value="JMS">JMS</option>
-                    <option value="GYM">GYM</option>
-                  </select>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row items-center justify-between border-t border-gray-100 bg-gray-50 px-6 py-4">
+                <div className="text-sm text-gray-600">
+                  Showing{" "}
+                  {Math.min(
+                    inventoryStartIndex + 1,
+                    sortedFilteredInventory.length,
+                  )}
+                  -{Math.min(inventoryEndIndex, sortedFilteredInventory.length)}{" "}
+                  of {sortedFilteredInventory.length} items
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Unit
-                  </label>
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
-                  >
-                    <option value="all">All Units</option>
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Sort By
-                  </label>
-                  <select
-                    value={sortOption}
-                    onChange={(e) =>
-                      setSortOption(
-                        e.target.value as
-                          | "name-az"
-                          | "name-za"
-                          | "unit-az"
-                          | "unit-za"
-                          | "stock-high"
-                          | "stock-low"
-                          | "id-az"
-                          | "id-za",
-                      )
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent text-sm"
-                  >
-                    <option value="name-az">Name (A-Z)</option>
-                    <option value="name-za">Name (Z-A)</option>
-                    <option value="unit-az">Unit (A-Z)</option>
-                    <option value="unit-za">Unit (Z-A)</option>
-                    <option value="stock-high">Stock (High)</option>
-                    <option value="stock-low">Stock (Low)</option>
-                    <option value="id-az">Item ID (A-Z)</option>
-                    <option value="id-za">Item ID (Z-A)</option>
-                  </select>
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <label htmlFor="inventory-page-size-top">Show:</label>
+                    <select
+                      id="inventory-page-size-top"
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value) as 10 | 20);
+                      }}
+                      className="px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                    >
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage(Math.max(1, currentPage - 1))
+                      }
+                      disabled={currentPage === 1}
+                      className="px-3 py-2 border border-gray-300 rounded-lg bg-white disabled:opacity-50"
+                    >
+                      ←
+                    </button>
+                    <span>
+                      Page {currentPage} of {inventoryTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage(
+                          Math.min(inventoryTotalPages, currentPage + 1),
+                        )
+                      }
+                      disabled={currentPage === inventoryTotalPages}
+                      className="px-3 py-2 border border-gray-300 rounded-lg bg-white disabled:opacity-50"
+                    >
+                      →
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1196,16 +1273,26 @@ const getStockStatus = (item: InventoryItem) => {
                         </td>
                       </tr>
                     ) : (
-                      getSortedInventory(filteredInventory).map((item) => {
-                      const criticalLimit = item.critical_stock || 0;
-                      const warningLimit = item.stock_threshold || criticalLimit * 2;
-                      const percentage = warningLimit > 0 ? (item.remaining_stock / warningLimit) * 100 : 100;
+                      paginatedInventory.map((item) => {
+                        const criticalLimit = item.critical_stock || 0;
+                        const warningLimit =
+                          item.stock_threshold || criticalLimit * 2;
+                        const percentage =
+                          warningLimit > 0
+                            ? (item.remaining_stock / warningLimit) * 100
+                            : 100;
 
-                      const status = getStockStatus(item);
-                      const isCritical = item.remaining_stock <= criticalLimit;
-                      const isLow = item.remaining_stock <= warningLimit && !isCritical;
-                      const barColor = isCritical ? "bg-red-600" : isLow ? "bg-orange-500" : "bg-green-500";
-                      const StatusIcon = status.icon;
+                        const status = getStockStatus(item);
+                        const isCritical =
+                          item.remaining_stock <= criticalLimit;
+                        const isLow =
+                          item.remaining_stock <= warningLimit && !isCritical;
+                        const barColor = isCritical
+                          ? "bg-red-600"
+                          : isLow
+                            ? "bg-orange-500"
+                            : "bg-green-500";
+                        const StatusIcon = status.icon;
                         return (
                           <tr key={item.item_no} className="hover:bg-gray-50">
                             <td className="px-6 py-4">
@@ -1226,22 +1313,30 @@ const getStockStatus = (item: InventoryItem) => {
                                 {item.remaining_stock}{" "}
                                 {item.units?.name || "unit"}
                               </div>
-{item.critical_stock !== undefined && item.critical_stock !== null && (
-  <>
-    <div className="text-xs text-gray-500 flex gap-2 mt-1">
-      <span>Critical: {item.critical_stock}</span>
-      {item.stock_threshold ? <span>Warning: {item.stock_threshold}</span> : null}
-    </div>
-    <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
-      <div
-        className={`h-1.5 rounded-full ${barColor}`}
-        style={{
-          width: `${Math.min(percentage, 100)}%`,
-        }}
-      />
-    </div>
-  </>
-)}                            </td>
+                              {item.critical_stock !== undefined &&
+                                item.critical_stock !== null && (
+                                  <>
+                                    <div className="text-xs text-gray-500 flex gap-2 mt-1">
+                                      <span>
+                                        Critical: {item.critical_stock}
+                                      </span>
+                                      {item.stock_threshold ? (
+                                        <span>
+                                          Warning: {item.stock_threshold}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+                                      <div
+                                        className={`h-1.5 rounded-full ${barColor}`}
+                                        style={{
+                                          width: `${Math.min(percentage, 100)}%`,
+                                        }}
+                                      />
+                                    </div>
+                                  </>
+                                )}{" "}
+                            </td>
                             <td className="px-6 py-4">
                               <span
                                 className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${status.color}`}
@@ -1274,6 +1369,60 @@ const getStockStatus = (item: InventoryItem) => {
                     )}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row items-center justify-between p-4 border-t border-gray-200 bg-gray-50">
+                <div className="text-sm text-gray-600">
+                  Showing{" "}
+                  {Math.min(
+                    inventoryStartIndex + 1,
+                    sortedFilteredInventory.length,
+                  )}
+                  -{Math.min(inventoryEndIndex, sortedFilteredInventory.length)}{" "}
+                  of {sortedFilteredInventory.length} items
+                </div>
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <label htmlFor="inventory-page-size">Show:</label>
+                    <select
+                      id="inventory-page-size"
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value) as 10 | 20);
+                      }}
+                      className="px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-[#4A89B0] focus:border-transparent"
+                    >
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage(Math.max(1, currentPage - 1))
+                      }
+                      disabled={currentPage === 1}
+                      className="px-3 py-2 border border-gray-300 rounded-lg bg-white disabled:opacity-50"
+                    >
+                      ←
+                    </button>
+                    <span>
+                      Page {currentPage} of {inventoryTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage(
+                          Math.min(inventoryTotalPages, currentPage + 1),
+                        )
+                      }
+                      disabled={currentPage === inventoryTotalPages}
+                      className="px-3 py-2 border border-gray-300 rounded-lg bg-white disabled:opacity-50"
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1416,8 +1565,8 @@ const getStockStatus = (item: InventoryItem) => {
                     <div className="p-6 space-y-6">
                       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                         <p className="text-sm text-blue-800">
-                          Add a new item to your inventory. Fill in all
-                          required fields marked with *.
+                          Add a new item to your inventory. Fill in all required
+                          fields marked with *.
                         </p>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1520,8 +1669,7 @@ const getStockStatus = (item: InventoryItem) => {
                               <option value="">Select a unit...</option>
                               {availableUnits
                                 .filter(
-                                  (unit) =>
-                                    unit.name.toLowerCase() !== "unit",
+                                  (unit) => unit.name.toLowerCase() !== "unit",
                                 )
                                 .map((unit) => (
                                   <option key={unit.pkid} value={unit.pkid}>
@@ -1581,13 +1729,15 @@ const getStockStatus = (item: InventoryItem) => {
                                 value === "" ||
                                 (/^\d+$/.test(value) && parseInt(value) >= 0)
                               ) {
-                                const initialStock = value === "" ? 0 : parseInt(value);
+                                const initialStock =
+                                  value === "" ? 0 : parseInt(value);
                                 const critical = Math.ceil(initialStock * 0.1);
                                 const threshold = Math.ceil(initialStock * 0.3);
 
                                 setNewItem({
                                   ...newItem,
-                                  remaining_stock: value === "" ? "" : initialStock,
+                                  remaining_stock:
+                                    value === "" ? "" : initialStock,
                                   critical_stock: critical,
                                   stock_threshold: threshold,
                                 });
@@ -1650,9 +1800,7 @@ const getStockStatus = (item: InventoryItem) => {
                       className="flex-1 px-6 py-2 bg-[#4A89B0] text-white rounded-lg hover:bg-[#3776A0] transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       <Plus className="w-5 h-5" />
-                      {actionLoading
-                        ? "Adding..."
-                        : "Add Item to Inventory"}
+                      {actionLoading ? "Adding..." : "Add Item to Inventory"}
                     </button>
                   </div>
                 </div>
@@ -1689,7 +1837,9 @@ const getStockStatus = (item: InventoryItem) => {
                           <select
                             value={itemIdPrefix}
                             onChange={(e) => {
-                              const newPrefix = e.target.value as "JMS" | "GYM-S";
+                              const newPrefix = e.target.value as
+                                | "JMS"
+                                | "GYM-S";
                               setItemIdPrefix(newPrefix);
                               checkItemIdExists(
                                 newPrefix,
@@ -1744,12 +1894,23 @@ const getStockStatus = (item: InventoryItem) => {
                             className="w-12 px-3 py-1.5 border-2 border-gray-300 bg-white rounded-lg text-center focus:ring-2 focus:ring-[#4A89B0] focus:border-[#4A89B0] text-sm uppercase"
                           />
                           <span className="text-sm text-gray-500 font-mono bg-gray-100 px-3 py-1.5 rounded-lg">
-                            → {buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter)}
+                            →{" "}
+                            {buildItemNo(
+                              itemIdPrefix,
+                              itemIdNumber,
+                              itemIdLetter,
+                            )}
                           </span>
                         </div>
                         {itemIdExists && (
                           <p className="text-xs text-red-600 mt-1 font-medium">
-                            ⚠ Item ID {buildItemNo(itemIdPrefix, itemIdNumber, itemIdLetter)} already exists
+                            ⚠ Item ID{" "}
+                            {buildItemNo(
+                              itemIdPrefix,
+                              itemIdNumber,
+                              itemIdLetter,
+                            )}{" "}
+                            already exists
                           </p>
                         )}
                       </div>
@@ -1770,15 +1931,10 @@ const getStockStatus = (item: InventoryItem) => {
                         >
                           {availableUnits
                             .filter(
-                              (unit) =>
-                                unit.name.toLowerCase() !==
-                                "unit",
+                              (unit) => unit.name.toLowerCase() !== "unit",
                             )
                             .map((unit) => (
-                              <option
-                                key={unit.pkid}
-                                value={unit.pkid}
-                              >
+                              <option key={unit.pkid} value={unit.pkid}>
                                 {unit.name}
                               </option>
                             ))}
@@ -1794,12 +1950,22 @@ const getStockStatus = (item: InventoryItem) => {
                           value={editingItem.remaining_stock}
                           onChange={(e) => {
                             const value = e.target.value;
-                            if (value === "" || (/^\d+$/.test(value) && parseInt(value) >= 0)) {
-                              const newStock = value === "" ? "" : parseInt(value);
-                              
+                            if (
+                              value === "" ||
+                              (/^\d+$/.test(value) && parseInt(value) >= 0)
+                            ) {
+                              const newStock =
+                                value === "" ? "" : parseInt(value);
+
                               // Auto-calculate thresholds based on the adjusted stock
-                              const critical = newStock === "" ? "" : Math.ceil(newStock * 0.10);
-                              const threshold = newStock === "" ? "" : Math.ceil(newStock * 0.30);
+                              const critical =
+                                newStock === ""
+                                  ? ""
+                                  : Math.ceil(newStock * 0.1);
+                              const threshold =
+                                newStock === ""
+                                  ? ""
+                                  : Math.ceil(newStock * 0.3);
 
                               setEditingItem({
                                 ...editingItem,
@@ -1857,15 +2023,18 @@ const getStockStatus = (item: InventoryItem) => {
                         if (editingItem) {
                           setDeleteTarget({
                             ...editingItem,
-                            remaining_stock: typeof editingItem.remaining_stock === "string" 
-                              ? parseInt(editingItem.remaining_stock) || 0 
-                              : editingItem.remaining_stock,
-                            critical_stock: typeof editingItem.critical_stock === "string"
-                              ? parseInt(editingItem.critical_stock) || 0
-                              : editingItem.critical_stock,
-                            stock_threshold: typeof editingItem.stock_threshold === "string"
-                              ? parseInt(editingItem.stock_threshold) || 0
-                              : editingItem.stock_threshold,
+                            remaining_stock:
+                              typeof editingItem.remaining_stock === "string"
+                                ? parseInt(editingItem.remaining_stock) || 0
+                                : editingItem.remaining_stock,
+                            critical_stock:
+                              typeof editingItem.critical_stock === "string"
+                                ? parseInt(editingItem.critical_stock) || 0
+                                : editingItem.critical_stock,
+                            stock_threshold:
+                              typeof editingItem.stock_threshold === "string"
+                                ? parseInt(editingItem.stock_threshold) || 0
+                                : editingItem.stock_threshold,
                           } as InventoryItem);
                           setShowDeleteModal(true);
                           setShowEditModal(false);
