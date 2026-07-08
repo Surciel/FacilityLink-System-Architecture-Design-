@@ -88,11 +88,18 @@ const monthNameToIndex: { [key: string]: number } = {
 const ForecastTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   const itemName = payload[0]?.payload?.name;
-  const displayLabel = itemName ? `${itemName} (${label})` : label;
+  const monthLabel = payload[0]?.payload?.fullMonthLabel;
+  const displayLabel = itemName
+    ? `${itemName} (${monthLabel || label})`
+    : monthLabel || label;
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs">
-      <p className="font-semibold text-gray-800 mb-1">{displayLabel}</p>
+      <div className="mb-2">
+        <p className="text-sm font-semibold text-gray-900 leading-tight">
+          {displayLabel}
+        </p>
+      </div>
       {payload.map((p: any, i: number) => (
         <div key={i} className="flex items-center gap-2">
           <span
@@ -480,18 +487,30 @@ export function AnalyticsPage() {
     // 1. Pre-build the 13 monthly buckets (prevents missing months if there's no data)
     const trendByMonth: Record<
       string,
-      { consumables: number; borrowables: number; isCurrent: boolean }
+      {
+        consumables: number;
+        borrowables: number;
+        isCurrent: boolean;
+        fullMonthLabel: string;
+      }
     > = {};
     const monthOrder: string[] = [];
 
     for (let i = 0; i < 13; i++) {
       const date = new Date(currentYear, currentMonthIndex - i, 1);
       const mIndex = date.getMonth();
+      const year = date.getFullYear();
       const isCurrent = i === 0;
       const displayKey = `${shortMonths[mIndex]}${isCurrent ? " (Current)" : ""}`;
+      const fullMonthLabel = `${fullMonths[mIndex]} ${year}${isCurrent ? " (Current)" : ""}`;
 
       monthOrder.push(displayKey);
-      trendByMonth[displayKey] = { consumables: 0, borrowables: 0, isCurrent };
+      trendByMonth[displayKey] = {
+        consumables: 0,
+        borrowables: 0,
+        isCurrent,
+        fullMonthLabel,
+      };
     }
 
     const { data: historyRows, error } = await supabase
@@ -504,19 +523,30 @@ export function AnalyticsPage() {
     }
 
     const parsePeriodLabel = (label: string) => {
-      const monthMatch = label.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+      const monthMatch = label.match(
+        /^(January|February|March|April|May|June|July|August|September|October|November|December)/i,
+      );
       const yearMatch = label.match(/(\d{4})$/);
       if (!monthMatch || !yearMatch) return null;
       const monthName = monthMatch[1];
       const monthIndex = monthNameToIndex[monthName];
       const year = Number(yearMatch[1]);
-      const isCurrent = monthIndex === currentMonthIndex && year === currentYear;
+      const isCurrent =
+        monthIndex === currentMonthIndex && year === currentYear;
       return `${shortMonths[monthIndex]}${isCurrent ? " (Current)" : ""}`;
     };
 
     const withinWindow = (date: Date) => {
       const startDate = new Date(currentYear, currentMonthIndex - 12, 1);
-      const endDate = new Date(currentYear, currentMonthIndex + 1, 0, 23, 59, 59, 999);
+      const endDate = new Date(
+        currentYear,
+        currentMonthIndex + 1,
+        0,
+        23,
+        59,
+        59,
+        999,
+      );
       return date >= startDate && date <= endDate;
     };
 
@@ -528,7 +558,8 @@ export function AnalyticsPage() {
         if (!Number.isNaN(rowDate.getTime()) && withinWindow(rowDate)) {
           const rowMonth = rowDate.getMonth();
           const rowYear = rowDate.getFullYear();
-          const isCurrent = rowMonth === currentMonthIndex && rowYear === currentYear;
+          const isCurrent =
+            rowMonth === currentMonthIndex && rowYear === currentYear;
           displayKey = `${shortMonths[rowMonth]}${isCurrent ? " (Current)" : ""}`;
         }
       }
@@ -551,6 +582,7 @@ export function AnalyticsPage() {
 
     const trendData = monthOrder.reverse().map((key) => ({
       month: key,
+      fullMonthLabel: trendByMonth[key].fullMonthLabel,
       consumables: trendByMonth[key].consumables,
       borrowables: trendByMonth[key].borrowables,
       isCurrent: trendByMonth[key].isCurrent,
@@ -579,8 +611,10 @@ export function AnalyticsPage() {
     // We removed the duplicate 'const now = new Date();' here since it's already declared above
     const thisMonth = now.getMonth();
     const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
-    const thisMonthCounts: Record<string, number> = {};
-    const lastMonthCounts: Record<string, number> = {};
+    const itemStats: Record<
+      string,
+      { name: string; thisMonth: number; lastMonth: number }
+    > = {};
 
     (data || []).forEach((row) => {
       const createdAt = row.created_at ? new Date(row.created_at) : null;
@@ -589,59 +623,67 @@ export function AnalyticsPage() {
       if (quantity === 0) return;
       const month = createdAt.getMonth();
       const rowAny = row as any;
+      const itemNo = rowAny.item_no || "Unknown";
       const inventoryDescription = Array.isArray(rowAny.inventory)
         ? rowAny.inventory[0]?.description
         : rowAny.inventory?.description;
-      const name = inventoryDescription || rowAny.item_no || "Unknown Item";
-      if (month === thisMonth)
-        thisMonthCounts[name] = (thisMonthCounts[name] || 0) + quantity;
-      if (month === lastMonth)
-        lastMonthCounts[name] = (lastMonthCounts[name] || 0) + quantity;
+      const name = inventoryDescription || itemNo || "Unknown Item";
+
+      if (!itemStats[itemNo]) {
+        itemStats[itemNo] = { name, thisMonth: 0, lastMonth: 0 };
+      }
+
+      if (month === thisMonth) {
+        itemStats[itemNo].thisMonth += quantity;
+      }
+      if (month === lastMonth) {
+        itemStats[itemNo].lastMonth += quantity;
+      }
     });
 
-    const positiveThisMonthCounts = Object.fromEntries(
-      Object.entries(thisMonthCounts).filter(([, count]) => count > 0),
-    );
+    const positiveThisMonthCounts = Object.entries(itemStats)
+      .filter(([, stats]) => stats.thisMonth > 0)
+      .sort(([, a], [, b]) => b.thisMonth - a.thisMonth);
 
     setTopRequestedItems(
-      Object.entries(positiveThisMonthCounts)
-        .sort((a, b) => b[1] - a[1])
-        .map(([name, requests]) => {
-          const previousMonthRequests = lastMonthCounts[name] || 0;
-          const trendValue =
-            previousMonthRequests > 0
-              ? Math.round(
-                  ((requests - previousMonthRequests) / previousMonthRequests) *
-                    100,
-                )
-              : 0;
-          const isNew = previousMonthRequests === 0;
-          const isHighVolume = requests >= 10;
-          return {
-            name,
-            requests,
-            previousMonthRequests,
-            trend: trendValue,
-            isNew,
-            trendLabel: isNew
-              ? "New"
-              : `${trendValue > 0 ? "+" : ""}${trendValue}%`,
-            advice: isNew
-              ? "New request item this month"
-              : trendValue > 0
-                ? isHighVolume
-                  ? "Consider increasing stock"
-                  : "Demand rising, monitor inventory"
-                : "Demand stable or decreasing",
-            adviceType: isNew
-              ? "new"
-              : trendValue > 0
-                ? isHighVolume
-                  ? "increase"
-                  : "monitor"
-                : "stable",
-          };
-        }),
+      positiveThisMonthCounts.map(([item_no, stats]) => {
+        const requests = stats.thisMonth;
+        const previousMonthRequests = stats.lastMonth;
+        const trendValue =
+          previousMonthRequests > 0
+            ? Math.round(
+                ((requests - previousMonthRequests) / previousMonthRequests) *
+                  100,
+              )
+            : 0;
+        const isNew = previousMonthRequests === 0;
+        const isHighVolume = requests >= 10;
+        return {
+          item_no,
+          name: stats.name,
+          requests,
+          previousMonthRequests,
+          trend: trendValue,
+          isNew,
+          trendLabel: isNew
+            ? "New"
+            : `${trendValue > 0 ? "+" : ""}${trendValue}%`,
+          advice: isNew
+            ? "New request item this month"
+            : trendValue > 0
+              ? isHighVolume
+                ? "Consider increasing stock"
+                : "Demand rising, monitor inventory"
+              : "Demand stable or decreasing",
+          adviceType: isNew
+            ? "new"
+            : trendValue > 0
+              ? isHighVolume
+                ? "increase"
+                : "monitor"
+              : "stable",
+        };
+      }),
     );
 
     const colors = [
@@ -653,7 +695,7 @@ export function AnalyticsPage() {
       "#ec4899",
     ];
     const topSix = Object.entries(positiveThisMonthCounts)
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
       .slice(0, 6);
   };
 
@@ -984,6 +1026,7 @@ export function AnalyticsPage() {
       const velocityMap: Record<
         string,
         {
+          item_no: string;
           name: string;
           twoMonthsAgo: number;
           oneMonthAgo: number;
@@ -1008,6 +1051,7 @@ export function AnalyticsPage() {
           const itemName = description || req.item_no;
           if (!velocityMap[req.item_no]) {
             velocityMap[req.item_no] = {
+              item_no: req.item_no,
               name: itemName,
               twoMonthsAgo: 0,
               oneMonthAgo: 0,
@@ -1080,7 +1124,9 @@ export function AnalyticsPage() {
 
       const { data: inventoryRows, error } = await supabase
         .from("inventory")
-        .select("item_no, description, remaining_stock, critical_stock, item_type");
+        .select(
+          "item_no, description, remaining_stock, critical_stock, item_type",
+        );
 
       if (error) {
         console.error("Failed to load critical inventory items:", error);
@@ -1133,7 +1179,10 @@ export function AnalyticsPage() {
         startY: 48,
         head: [
           [
-            { content: "Item Description", styles: { halign: "left" as const } },
+            {
+              content: "Item Description",
+              styles: { halign: "left" as const },
+            },
             { content: "Current Stock", styles: { halign: "center" as const } },
             { content: "Item Type", styles: { halign: "center" as const } },
           ],
@@ -1169,9 +1218,14 @@ export function AnalyticsPage() {
         doc.setPage(p);
         doc.setFont("times", "normal");
         doc.setFontSize(8);
-        doc.text(`Page ${p} of ${totalPages}`, pageWidth - margin, pageHeight - 8, {
-          align: "right",
-        });
+        doc.text(
+          `Page ${p} of ${totalPages}`,
+          pageWidth - margin,
+          pageHeight - 8,
+          {
+            align: "right",
+          },
+        );
         doc.text(`${monthName} ${year}`, margin, pageHeight - 8);
       }
 
@@ -2167,6 +2221,9 @@ export function AnalyticsPage() {
                         >
                           <div className="flex items-center justify-between gap-3 mb-4">
                             <div className="flex-1 min-w-0">
+                              <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
+                                {item.item_no}
+                              </p>
                               <h4 className="font-bold text-gray-900 text-sm leading-tight truncate">
                                 {item.name}
                               </h4>
@@ -2387,8 +2444,11 @@ export function AnalyticsPage() {
                         <table className="w-full text-sm border-collapse">
                           <thead>
                             <tr className="bg-gray-100">
-                              <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-700">
+                              <th className="border border-gray-300 px-3 py-2 text-center font-semibold text-gray-700">
                                 #
+                              </th>
+                              <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-700">
+                                Item No
                               </th>
                               <th className="border border-gray-300 px-3 py-2 text-left font-semibold text-gray-700">
                                 Item Name
@@ -2415,6 +2475,9 @@ export function AnalyticsPage() {
                               >
                                 <td className="border border-gray-300 px-3 py-2 text-center font-medium text-gray-600">
                                   {item.index}
+                                </td>
+                                <td className="border border-gray-300 px-3 py-2 text-left text-gray-700">
+                                  {item.item_no}
                                 </td>
                                 <td
                                   className="border border-gray-300 px-3 py-2 text-gray-700"
@@ -2548,8 +2611,8 @@ export function AnalyticsPage() {
                     {f === "all"
                       ? "All Items"
                       : f === "consumable"
-                        ? "Consumables"
-                        : "Borrowables"}
+                        ? "JMS Items"
+                        : "GYM Items"}
                   </button>
                 ))}
               </div>
@@ -2611,7 +2674,7 @@ export function AnalyticsPage() {
                           stroke="#10b981"
                           fill="url(#consumablesGradient)"
                           strokeWidth={2}
-                          name="Consumables"
+                          name="JMS Items"
                           opacity={consumableOpacity}
                           isAnimationActive
                           animationDuration={500}
@@ -2628,7 +2691,7 @@ export function AnalyticsPage() {
                           stroke="#a855f7"
                           fill="url(#borrowablesGradient)"
                           strokeWidth={2}
-                          name="Borrowables"
+                          name="GYM Items"
                           opacity={borrowableOpacity}
                           isAnimationActive
                           animationDuration={500}

@@ -32,6 +32,8 @@ export function Dashboard() {
 
   const [requests, setRequests] = useState<any[]>([]);
   const [lowStockItems, setLowStockItems] = useState<any[]>([]);
+  const [priorityPage, setPriorityPage] = useState(1);
+  const [priorityPageSize, setPriorityPageSize] = useState<5 | 10 | 15 | 20>(5);
   const [totalItems, setTotalItems] = useState(0);
   const [completedToday, setCompletedToday] = useState(0);
   const [burnRateData, setBurnRateData] = useState<any[]>([]);
@@ -261,6 +263,16 @@ export function Dashboard() {
     if (error) return console.error(error);
     setCompletedToday(count || 0);
   };
+
+  useEffect(() => {
+    const maxPage = Math.max(
+      1,
+      Math.ceil(lowStockItems.length / priorityPageSize),
+    );
+    if (priorityPage > maxPage) {
+      setPriorityPage(maxPage);
+    }
+  }, [lowStockItems, priorityPageSize, priorityPage]);
 
   const menuItems = [
     { path: "/admin", icon: LayoutDashboard, label: "Dashboard" },
@@ -581,71 +593,155 @@ export function Dashboard() {
                   </p>
                 </div>
 
-                <div className="p-4 space-y-3 h-96 overflow-y-auto">
-                  {loading ? (
-                    <div className="text-center text-gray-400 py-4">
-                      Loading...
-                    </div>
-                  ) : lowStockItems.length === 0 ? (
-                    <div className="text-center text-gray-400 py-4">
-                      All items are well stocked!
-                    </div>
-                  ) : (
-                    lowStockItems.map((item, index) => {
-                      const criticalLimit = item.critical_stock || 0;
-                      const warningLimit =
-                        item.stock_threshold || criticalLimit * 2 || 10;
+                <div className="p-4">
+                  <div className="h-96 overflow-y-auto space-y-3">
+                    {loading ? (
+                      <div className="text-center text-gray-400 py-4">
+                        Loading...
+                      </div>
+                    ) : lowStockItems.length === 0 ? (
+                      <div className="text-center text-gray-400 py-4">
+                        All items are well stocked!
+                      </div>
+                    ) : (
+                      lowStockItems
+                        .slice(
+                          (priorityPage - 1) * priorityPageSize,
+                          priorityPage * priorityPageSize,
+                        )
+                        .map((item, index) => {
+                          const criticalLimit = item.critical_stock || 0;
+                          const warningLimit =
+                            item.stock_threshold || criticalLimit * 2 || 10;
 
-                      // Calculate percentage relative to the warning limit for a better visual scale
-                      const percentage = Math.min(
-                        (item.remaining_stock / warningLimit) * 100,
-                        100,
-                      );
+                          const percentage = Math.min(
+                            (item.remaining_stock / warningLimit) * 100,
+                            100,
+                          );
 
-                      // Determine status colors based on the new thresholds
-                      const isCritical = item.remaining_stock <= criticalLimit;
-                      const isLow =
-                        item.remaining_stock <= warningLimit && !isCritical;
+                          const isCritical =
+                            item.remaining_stock <= criticalLimit;
+                          const isLow =
+                            item.remaining_stock <= warningLimit && !isCritical;
 
-                      const barColor = isCritical
-                        ? "bg-red-600"
-                        : isLow
-                          ? "bg-orange-500"
-                          : "bg-green-500";
-                      return (
-                        <div
-                          key={index}
-                          className="p-3 bg-red-50 border border-red-100 rounded-lg"
-                        >
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <div className="font-semibold text-gray-900 text-sm">
-                                {item.description}
+                          const barColor = isCritical
+                            ? "bg-red-600"
+                            : isLow
+                              ? "bg-orange-500"
+                              : "bg-green-500";
+                          return (
+                            <div
+                              key={index}
+                              className="p-3 bg-red-50 border border-red-100 rounded-lg"
+                            >
+                              <div className="flex items-start justify-between mb-2">
+                                <div className="flex-1">
+                                  <div className="font-semibold text-gray-900 text-sm">
+                                    {item.description}
+                                  </div>
+                                  <div className="text-xs text-gray-600">
+                                    {item.item_no}
+                                  </div>
+                                </div>
+                                <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
+                                  {item.remaining_stock} {item.units?.name}
+                                </span>
                               </div>
-                              <div className="text-xs text-gray-600">
-                                {item.item_no}
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between text-xs text-gray-600">
+                                  <span>Stock Level</span>
+                                  <span>{Math.round(percentage)}%</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                  <div
+                                    className={`h-2 rounded-full ${barColor}`}
+                                    style={{ width: `${percentage}%` }}
+                                  />
+                                </div>
                               </div>
                             </div>
-                            <span className="bg-red-600 text-white text-xs px-2 py-1 rounded font-medium">
-                              {item.remaining_stock} {item.units?.name}
-                            </span>
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-xs text-gray-600">
-                              <span>Stock Level</span>
-                              <span>{Math.round(percentage)}%</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div
-                                className={`h-2 rounded-full ${barColor}`}
-                                style={{ width: `${percentage}%` }}
-                              />
-                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+
+                  {lowStockItems.length > 0 && !loading ? (
+                    <div className="mt-3 px-4 py-4 border-t border-gray-200 bg-slate-50 rounded-b-xl">
+                      <div className="grid gap-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm text-gray-700">
+                          <span className="font-medium">Items per page:</span>
+                          <span className="inline-flex items-center justify-center rounded-full border border-gray-200 bg-white px-4 py-1 text-sm font-medium text-gray-700">
+                            Page {priorityPage} of{" "}
+                            {Math.max(
+                              1,
+                              Math.ceil(
+                                lowStockItems.length / priorityPageSize,
+                              ),
+                            )}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <select
+                            id="priorityPageSize"
+                            value={priorityPageSize}
+                            onChange={(e) => {
+                              setPriorityPageSize(
+                                Number(e.target.value) as 5 | 10 | 15 | 20,
+                              );
+                              setPriorityPage(1);
+                            }}
+                            className="rounded-full border border-gray-300 bg-white px-3 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#4A89B0]"
+                          >
+                            {[5, 10, 15, 20].map((size) => (
+                              <option key={size} value={size}>
+                                {size}
+                              </option>
+                            ))}
+                          </select>
+
+                          <div className="flex items-center gap-2 justify-end">
+                            <button
+                              onClick={() =>
+                                setPriorityPage(Math.max(1, priorityPage - 1))
+                              }
+                              disabled={priorityPage === 1}
+                              className="rounded-full border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                            >
+                              Previous
+                            </button>
+                            <button
+                              onClick={() =>
+                                setPriorityPage(
+                                  Math.min(
+                                    Math.max(
+                                      1,
+                                      Math.ceil(
+                                        lowStockItems.length / priorityPageSize,
+                                      ),
+                                    ),
+                                    priorityPage + 1,
+                                  ),
+                                )
+                              }
+                              disabled={
+                                priorityPage >=
+                                Math.max(
+                                  1,
+                                  Math.ceil(
+                                    lowStockItems.length / priorityPageSize,
+                                  ),
+                                )
+                              }
+                              className="rounded-full border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                            >
+                              Next
+                            </button>
                           </div>
                         </div>
-                      );
-                    })
-                  )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>

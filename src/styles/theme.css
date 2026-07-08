@@ -126,7 +126,9 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Merriweather', serif;
+    font-family: "Merriweather", serif;
+    min-height: 100vh;
+    overflow-y: overlay;
   }
 
   /**
@@ -136,7 +138,9 @@
 
   html {
     font-size: var(--font-size);
-    font-family: 'Merriweather', serif;
+    font-family: "Merriweather", serif;
+    overflow-y: overlay;
+    scrollbar-gutter: stable;
   }
 
   h1 {
