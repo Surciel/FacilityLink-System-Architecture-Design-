@@ -790,23 +790,70 @@ export function AnalyticsPage() {
     setTotalOutOfStock(outOfStockCount); // ← add this
   };
 
+  const parsePeriodLabelToMonthYear = (label: string) => {
+    const rangeRegex = new RegExp(
+      "^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{1,2}\\s*-\\s*(January|February|March|April|May|June|July|August|September|October|November|December)\\s+\\d{1,2},\\s*(\\d{4})$",
+      "i",
+    );
+    const monthYearRegex = new RegExp(
+      "^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(\\d{4})$",
+      "i",
+    );
+    const rangeMatch = label.match(rangeRegex);
+    if (rangeMatch) {
+      const monthName =
+        rangeMatch[1][0].toUpperCase() + rangeMatch[1].slice(1).toLowerCase();
+      const monthIndex = monthNameToIndex[monthName];
+      const year = Number(rangeMatch[3]);
+      return { monthIndex, year, isRange: true };
+    }
+    const monthYearMatch = label.match(monthYearRegex);
+    if (monthYearMatch) {
+      const monthName =
+        monthYearMatch[1][0].toUpperCase() + monthYearMatch[1].slice(1).toLowerCase();
+      const monthIndex = monthNameToIndex[monthName];
+      const year = Number(monthYearMatch[2]);
+      return { monthIndex, year, isRange: false };
+    }
+    return null;
+  };
+
+  const isRangePeriodLabel = (label: string) => {
+    return parsePeriodLabelToMonthYear(label)?.isRange === true;
+  };
+
   const fetchAvailableMonths = async () => {
     const { data } = await supabase
       .from("inventory_history")
       .select("period_label")
       .not("period_label", "is", null);
 
-    const uniqueMonths = Array.from(
-      new Set((data || []).map((row) => row.period_label)),
-    ).sort((a, b) => {
-      const partsA = a.split(" ");
-      const partsB = b.split(" ");
-      const yearDiff =
-        parseInt(partsB[partsB.length - 1]) -
-        parseInt(partsA[partsA.length - 1]);
-      if (yearDiff !== 0) return yearDiff;
-      return monthNameToIndex[partsB[0]] - monthNameToIndex[partsA[0]];
+    const monthMap = new Map<string, { label: string; isRange: boolean }>();
+
+    (data || []).forEach((row: any) => {
+      const label = String(row.period_label || "").trim();
+      if (!label) return;
+
+      const parsed = parsePeriodLabelToMonthYear(label);
+      if (!parsed) return;
+
+      const key = `${parsed.year}-${parsed.monthIndex}`;
+      const existing = monthMap.get(key);
+      if (!existing || (!existing.isRange && parsed.isRange)) {
+        monthMap.set(key, { label, isRange: parsed.isRange });
+      }
     });
+
+    const uniqueMonths = Array.from(monthMap.values())
+      .map((entry) => entry.label)
+      .sort((a, b) => {
+        const parsedA = parsePeriodLabelToMonthYear(a);
+        const parsedB = parsePeriodLabelToMonthYear(b);
+        if (!parsedA || !parsedB) return a.localeCompare(b);
+        const yearDiff = parsedB.year - parsedA.year;
+        if (yearDiff !== 0) return yearDiff;
+        return parsedB.monthIndex - parsedA.monthIndex;
+      });
 
     if (!uniqueMonths.includes(defaultMonthOption))
       uniqueMonths.unshift(defaultMonthOption);
@@ -1292,14 +1339,20 @@ export function AnalyticsPage() {
     try {
       const isHistoricalMonth = availableMonths.includes(ssmiMonthOption);
       if (isHistoricalMonth) {
-        const { data: historyItems } = await supabase
+        const { data: historyItems, error: historyError } = await supabase
           .from("inventory_history")
           .select(
-            "item_no, stock_on_hand, total_qty_issued, unit_cost, week1, week2, week3, week4, item_description",
+            "item_no, stock_on_hand, total_qty_issued, unit_cost, week1, week2, week3, week4",
           )
           .ilike("item_no", `${prefix}%`)
           .eq("period_label", ssmiMonthOption)
           .order("item_no", { ascending: true });
+        if (historyError) {
+          console.error("Failed to load SSMI history items:", historyError);
+          toast.error(`Failed to load SSMI data for ${ssmiMonthOption}`);
+          setGenerating(null);
+          return;
+        }
         if (!historyItems || historyItems.length === 0) {
           toast.error(`No data found for ${ssmiMonthOption}`);
           setGenerating(null);
@@ -1309,10 +1362,13 @@ export function AnalyticsPage() {
         const itemNos = historyItems
           .map((item) => item.item_no)
           .filter(Boolean);
-        const { data: inventoryDescData } = await supabase
+        const { data: inventoryDescData, error: invError } = await supabase
           .from("inventory")
           .select("item_no, description")
           .in("item_no", itemNos);
+        if (invError) {
+          console.error("Failed to load inventory descriptions:", invError);
+        }
         const descriptionMap: Record<string, string> = {};
         (inventoryDescData || []).forEach((inv) => {
           descriptionMap[inv.item_no] = inv.description || "";
