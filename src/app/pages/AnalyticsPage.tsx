@@ -1206,7 +1206,10 @@ export function AnalyticsPage() {
       const col2 = Math.round(availableWidth * 0.15);
       const col3 = availableWidth - (col0 + col1 + col2);
       const tableTotalWidth = col0 + col1 + col2 + col3;
-      const marginLeft = Math.max(margin, Math.round((pageWidth - tableTotalWidth) / 2));
+      const marginLeft = Math.max(
+        margin,
+        Math.round((pageWidth - tableTotalWidth) / 2),
+      );
 
       autoTable(doc, {
         startY: 68,
@@ -1215,12 +1218,21 @@ export function AnalyticsPage() {
         head: [
           [
             { content: "Item No.", styles: { halign: "center" as const } },
-            { content: "Item Description", styles: { halign: "left" as const } },
+            {
+              content: "Item Description",
+              styles: { halign: "left" as const },
+            },
             { content: "Current Stock", styles: { halign: "center" as const } },
-            { content: "Item Threshold", styles: { halign: "center" as const } },
+            {
+              content: "Item Threshold",
+              styles: { halign: "center" as const },
+            },
           ],
         ],
-        body: bodyData.length > 0 ? bodyData : [["No critical stock items found", "", "", ""]],
+        body:
+          bodyData.length > 0
+            ? bodyData
+            : [["No critical stock items found", "", "", ""]],
         theme: "grid",
         styles: {
           font: "times",
