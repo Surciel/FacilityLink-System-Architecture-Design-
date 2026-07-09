@@ -145,12 +145,12 @@ export function UserRequestPage() {
     });
   };
 
-  // Fetch available inventory items on component mount
+  // Fetch available inventory items when the user type or department changes.
   useEffect(() => {
-    if (personalInfo.userType) {
-      fetchAvailableItems();
-    }
-  }, [personalInfo.userType]);
+    if (!personalInfo.userType) return;
+    if (personalInfo.userType === "faculty" && !personalInfo.department) return;
+    fetchAvailableItems();
+  }, [personalInfo.userType, personalInfo.department]);
 
 const fetchAvailableItems = async () => {
     if (!personalInfo.userType) return;
@@ -167,9 +167,10 @@ const fetchAvailableItems = async () => {
         .ilike("item_no", `${facilityPrefix}%`)
         .order("item_no", { ascending: true });
 
-      // 2. Apply the Office Filter
+      // 2. Apply the Office Filter only for non-utility faculty.
       if (
-        personalInfo.userType === "faculty" && 
+        personalInfo.userType === "faculty" &&
+        personalInfo.department &&
         personalInfo.department !== "Utility worker"
       ) {
         query = query.in("item_no", OFFICE_ALLOWED_ITEMS);
@@ -234,9 +235,10 @@ const fetchAvailableItems = async () => {
         .ilike("item_no", `${facilityPrefix}%`)
         .limit(10);
 
-      // 2. Apply the Office Filter
+      // 2. Apply the Office Filter only for non-utility faculty.
       if (
-        personalInfo.userType === "faculty" && 
+        personalInfo.userType === "faculty" &&
+        personalInfo.department &&
         personalInfo.department !== "Utility worker"
       ) {
         query = query.in("item_no", OFFICE_ALLOWED_ITEMS);

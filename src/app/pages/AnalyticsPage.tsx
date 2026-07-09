@@ -37,8 +37,6 @@ import {
   Inbox,
   Package,
   AlertCircle,
-  TrendingUp,
-  TrendingDown,
   BarChart3,
 } from "lucide-react";
 
@@ -68,6 +66,11 @@ const monthNameToIndex: { [key: string]: number } = {
   October: 9,
   November: 10,
   December: 11,
+};
+
+type MonthOption = {
+  value: string;
+  label: string;
 };
 
 // ── Custom tooltip for forecast charts ──────────────────────────────────────
@@ -123,6 +126,8 @@ export function AnalyticsPage() {
   const [selectedCategoryDetail, setSelectedCategoryDetail] =
     useState<any>(null);
   const [monthlyTrendData, setMonthlyTrendData] = useState<any[]>([]);
+  const [trendLoaded, setTrendLoaded] = useState(false);
+  const [trendLoading, setTrendLoading] = useState(false);
   const [trendFilter, setTrendFilter] = useState<
     "all" | "consumable" | "borrowable"
   >("all");
@@ -255,7 +260,7 @@ export function AnalyticsPage() {
   const [risDayOption, setRisDayOption] = useState<string>(
     getLocalISODate(new Date()),
   );
-  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [availableMonths, setAvailableMonths] = useState<MonthOption[]>([]);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
 
   const getDepartmentMonthLabel = () => {
@@ -427,7 +432,6 @@ export function AnalyticsPage() {
     try {
       await Promise.all([
         fetchWeeklyRequests(),
-        fetchMonthlyTrend(),
         fetchTopRequestedItems(),
         fetchSummaryStats(),
         fetchAvailableMonths(),
@@ -575,6 +579,19 @@ export function AnalyticsPage() {
     }));
 
     setMonthlyTrendData(trendData);
+  };
+
+  const loadMonthlyTrend = async () => {
+    setTrendLoading(true);
+    try {
+      await fetchMonthlyTrend();
+      setTrendLoaded(true);
+    } catch (error) {
+      console.error("Failed to load 13-month trend:", error);
+      toast.error("Failed to load 13-month trend data.");
+    } finally {
+      setTrendLoading(false);
+    }
   };
 
   const fetchTopRequestedItems = async () => {
@@ -808,13 +825,28 @@ export function AnalyticsPage() {
     return parsePeriodLabelToMonthYear(label)?.isRange === true;
   };
 
+  const canonicalMonthRangeLabel = (monthIndex: number, year: number) => {
+    const monthName = fullMonths[monthIndex];
+    const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+    return `${monthName} 1 - ${monthName} ${lastDay}, ${year}`;
+  };
+
   const fetchAvailableMonths = async () => {
     const { data } = await supabase
       .from("inventory_history")
       .select("period_label")
       .not("period_label", "is", null);
 
-    const monthMap = new Map<string, { label: string; isRange: boolean }>();
+    const monthMap = new Map<
+      string,
+      {
+        value: string;
+        displayLabel: string;
+        isRange: boolean;
+        year: number;
+        monthIndex: number;
+      }
+    >();
 
     (data || []).forEach((row: any) => {
       const label = String(row.period_label || "").trim();
@@ -824,31 +856,36 @@ export function AnalyticsPage() {
       if (!parsed) return;
 
       const key = `${parsed.year}-${parsed.monthIndex}`;
+      const displayLabel = parsed.isRange
+        ? label
+        : canonicalMonthRangeLabel(parsed.monthIndex, parsed.year);
       const existing = monthMap.get(key);
       if (!existing || (!existing.isRange && parsed.isRange)) {
-        monthMap.set(key, { label, isRange: parsed.isRange });
+        monthMap.set(key, {
+          value: label,
+          displayLabel,
+          isRange: parsed.isRange,
+          year: parsed.year,
+          monthIndex: parsed.monthIndex,
+        });
       }
     });
 
-    const uniqueMonths = Array.from(monthMap.values())
-      .map((entry) => entry.label)
-      .sort((a, b) => {
-        const parsedA = parsePeriodLabelToMonthYear(a);
-        const parsedB = parsePeriodLabelToMonthYear(b);
-        if (!parsedA || !parsedB) return a.localeCompare(b);
-        const yearDiff = parsedB.year - parsedA.year;
-        if (yearDiff !== 0) return yearDiff;
-        return parsedB.monthIndex - parsedA.monthIndex;
-      });
+    const monthOptions = Array.from(monthMap.values()).sort((a, b) => {
+      const yearDiff = b.year - a.year;
+      if (yearDiff !== 0) return yearDiff;
+      return b.monthIndex - a.monthIndex;
+    });
 
-    if (!uniqueMonths.includes(defaultMonthOption))
-      uniqueMonths.unshift(defaultMonthOption);
-    setAvailableMonths(uniqueMonths);
-    if (uniqueMonths.length > 0) {
-      if (!uniqueMonths.includes(risMonthOption))
-        setRisMonthOption(uniqueMonths[0]);
-      if (!uniqueMonths.includes(ssmiMonthOption))
-        setSsmiMonthOption(uniqueMonths[0]);
+    setAvailableMonths(
+      monthOptions.map((entry) => ({ value: entry.value, label: entry.displayLabel })),
+    );
+
+    if (monthOptions.length > 0) {
+      if (!monthOptions.some((opt) => opt.value === risMonthOption))
+        setRisMonthOption(monthOptions[0].value);
+      if (!monthOptions.some((opt) => opt.value === ssmiMonthOption))
+        setSsmiMonthOption(monthOptions[0].value);
     }
   };
 
@@ -1380,7 +1417,9 @@ export function AnalyticsPage() {
     setGenerating("SSMI");
     const prefix = reportFacility === "JMS" ? "JMS" : "GYM-S";
     try {
-      const isHistoricalMonth = availableMonths.includes(ssmiMonthOption);
+      const isHistoricalMonth = availableMonths.some(
+        (option) => option.value === ssmiMonthOption,
+      );
       if (isHistoricalMonth) {
         const { data: historyItems, error: historyError } = await supabase
           .from("inventory_history")
@@ -1434,8 +1473,7 @@ export function AnalyticsPage() {
           const unitCost = item.unit_cost || 0,
             totalCost = totalQty * unitCost;
           const balanceOnHand = stockOnHand - totalQty;
-          const description =
-            descriptionMap[item.item_no] || item.item_description || "";
+          const description = descriptionMap[item.item_no] || "";
           return [
             item.item_no || "",
             description,
@@ -2337,13 +2375,8 @@ export function AnalyticsPage() {
                               </div>
                             </div>
                             <div
-                              className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${trendBadgeColor}`}
+                              className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap flex-shrink-0 ${trendBadgeColor}`}
                             >
-                              {item.trend > 0 ? (
-                                <TrendingUp className="w-3.5 h-3.5" />
-                              ) : (
-                                <TrendingDown className="w-3.5 h-3.5" />
-                              )}
                               {item.trendLabel}
                             </div>
                           </div>
@@ -2716,7 +2749,23 @@ export function AnalyticsPage() {
                 ))}
               </div>
             </div>
-            {trendChartData.length > 0 ? (
+            {!trendLoaded ? (
+              <div className="h-[300px] flex flex-col items-center justify-center text-gray-600 gap-4">
+                <p className="text-sm text-gray-500 text-center max-w-xl">
+                  Click here to view the 13-Month Trend. This will load the trend
+                  data only when you need it, reducing Supabase memory usage.
+                </p>
+                <button
+                  onClick={loadMonthlyTrend}
+                  disabled={trendLoading}
+                  className="px-5 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
+                >
+                  {trendLoading
+                    ? "Loading 13-month trend..."
+                    : "Click here to view the 13-Month Trend"}
+                </button>
+              </div>
+            ) : trendChartData.length > 0 ? (
               <div style={{ width: "100%", position: "relative" }}>
                 <svg width="0" height="0" style={{ position: "absolute" }}>
                   <defs>
@@ -2851,8 +2900,8 @@ export function AnalyticsPage() {
                     >
                       {availableMonths.length > 0 ? (
                         availableMonths.map((month) => (
-                          <option key={month} value={month}>
-                            {month}
+                          <option key={month.value} value={month.value}>
+                            {month.label}
                           </option>
                         ))
                       ) : (
@@ -2977,8 +3026,8 @@ export function AnalyticsPage() {
                         className="w-full px-3 py-2 border-0 rounded bg-white text-gray-900 text-sm outline-none"
                       >
                         {availableMonths.map((opt) => (
-                          <option key={opt} value={opt}>
-                            {opt}
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
                           </option>
                         ))}
                       </select>
