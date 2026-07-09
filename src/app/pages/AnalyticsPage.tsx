@@ -31,36 +31,22 @@ import {
 import {
   Download,
   Calendar,
-  TrendingUp,
-  TrendingDown,
-  Package,
-  AlertCircle,
+  PackageOpen,
+  LogOut,
   LayoutDashboard,
   Inbox,
+  Package,
+  AlertCircle,
+  TrendingUp,
+  TrendingDown,
   BarChart3,
-  LogOut,
-  PackageOpen,
-  Activity,
-  Printer,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react";
-import { toast } from "sonner";
-import { useNavigate } from "react-router";
-import { supabase } from "../../supabaseClient";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 
-interface InventoryItem {
-  item_no: string;
-  description: string;
-  unit_id: string;
-  units?: { name: string };
-  remaining_stock: number;
-  critical_stock?: number;
-  stock_threshold?: number;
-  unit_cost?: number;
-}
+import { useNavigate } from "react-router";
+import { toast } from "sonner";
+import { supabase } from "../../supabaseClient";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const getLocalISODate = (date: Date) => {
   const year = date.getFullYear();
@@ -1186,15 +1172,36 @@ export function AnalyticsPage() {
           Number(item.remaining_stock) <= Number(item.critical_stock),
       );
 
-      doc.setFont("times", "bold");
-      doc.setFontSize(18);
-      doc.text("PROCUREMENT DECISION SUMMARY", pageWidth / 2, 16, {
+      // Use RIS-style header but replace RIS title with Procurement Decision Summary
+      doc.setFontSize(9).setFont("times");
+      doc.text("Republic of the Philippines", pageWidth / 2, 15, {
         align: "center",
       });
+      doc.setFont("times", "bold").setFontSize(10);
+      doc.text("PAMANTASAN NG LUNGSOD NG MAYNILA", pageWidth / 2, 20, {
+        align: "center",
+      });
+      doc.setFont("times", "normal").setFontSize(9);
+      doc.text(
+        "(University of the City of Manila)\nIntramuros, Manila",
+        pageWidth / 2,
+        24,
+        {
+          align: "center",
+        },
+      );
+      doc.setFont("times", "bold");
+      doc.text("GYMNASIUM MANAGEMENT SECTION", pageWidth / 2, 34, {
+        align: "center",
+      });
+      doc
+        .setFontSize(14)
+        .text("PROCUREMENT DECISION SUMMARY", pageWidth / 2, 42, {
+          align: "center",
+        });
 
-      doc.setFont("times", "normal");
-      doc.setFontSize(10);
-      doc.text(`Reporting Period: ${monthName} ${year}`, margin, 28);
+      doc.setFont("times", "normal").setFontSize(10);
+      doc.text(`Reporting Period: ${monthName} ${year}`, margin, 52);
       doc.text(
         `Generated: ${now.toLocaleDateString("en-PH", {
           year: "numeric",
@@ -1204,40 +1211,75 @@ export function AnalyticsPage() {
           minute: "2-digit",
         })}`,
         pageWidth - margin,
-        28,
+        52,
         { align: "right" },
       );
 
-      doc.setFont("times", "bold");
-      doc.setFontSize(12);
+      // Center the critical stock title
+      doc.setFont("times", "bold").setFontSize(12);
       doc.text(
         "CRITICAL STOCK ITEMS — STOCK AT OR BELOW CRITICAL LEVEL",
-        margin,
-        42,
+        pageWidth / 2,
+        62,
+        { align: "center" },
       );
 
-      const bodyData = criticalStockItems.map((item: any) => [
+      // Sort: GYM items first (ascending), then JMS items (ascending), then others
+      const sortedCritical = (criticalStockItems || [])
+        .slice()
+        .sort((a: any, b: any) => {
+          const aNo = (a.item_no || "").toString().toUpperCase();
+          const bNo = (b.item_no || "").toString().toUpperCase();
+          const rank = (no: string) => {
+            if (no.startsWith("GYM")) return "0" + no;
+            if (no.startsWith("JMS")) return "1" + no;
+            return "2" + no;
+          };
+          return rank(aNo).localeCompare(rank(bNo));
+        });
+
+      const bodyData = sortedCritical.map((item: any) => [
+        item.item_no || "",
         item.description || item.item_no || "Unknown item",
-        String(item.remaining_stock),
-        item.item_type || "",
+        String(item.remaining_stock ?? ""),
+        String(item.stock_threshold ?? item.critical_stock ?? ""),
       ]);
 
+      // Compute column widths to fit within page margins and center the table
+      const availableWidth = pageWidth - margin * 2;
+      // Allocate widths (adjustable): Item No 12%, Description 58%, Current Stock 15%, Threshold 15%
+      const col0 = Math.round(availableWidth * 0.12);
+      const col1 = Math.round(availableWidth * 0.58);
+      const col2 = Math.round(availableWidth * 0.15);
+      const col3 = availableWidth - (col0 + col1 + col2);
+      const tableTotalWidth = col0 + col1 + col2 + col3;
+      const marginLeft = Math.max(
+        margin,
+        Math.round((pageWidth - tableTotalWidth) / 2),
+      );
+
       autoTable(doc, {
-        startY: 48,
+        startY: 68,
+        margin: { left: marginLeft, right: margin },
+        tableWidth: tableTotalWidth,
         head: [
           [
+            { content: "Item No.", styles: { halign: "center" as const } },
             {
               content: "Item Description",
               styles: { halign: "left" as const },
             },
             { content: "Current Stock", styles: { halign: "center" as const } },
-            { content: "Item Type", styles: { halign: "center" as const } },
+            {
+              content: "Item Threshold",
+              styles: { halign: "center" as const },
+            },
           ],
         ],
         body:
           bodyData.length > 0
             ? bodyData
-            : [["No critical stock items found", "", ""]],
+            : [["No critical stock items found", "", "", ""]],
         theme: "grid",
         styles: {
           font: "times",
@@ -1254,9 +1296,10 @@ export function AnalyticsPage() {
         },
         alternateRowStyles: { fillColor: [240, 240, 240] },
         columnStyles: {
-          0: { cellWidth: 120 },
-          1: { cellWidth: 30 },
-          2: { cellWidth: 33 },
+          0: { cellWidth: col0, halign: "center" as const },
+          1: { cellWidth: col1 },
+          2: { cellWidth: col2, halign: "center" as const },
+          3: { cellWidth: col3, halign: "center" as const },
         },
       });
 
