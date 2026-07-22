@@ -126,8 +126,17 @@ export function AnalyticsPage() {
   const [selectedCategoryDetail, setSelectedCategoryDetail] =
     useState<any>(null);
   const [monthlyTrendData, setMonthlyTrendData] = useState<any[]>([]);
-  const [trendLoaded, setTrendLoaded] = useState(false);
+  const [trendDataCache, setTrendDataCache] = useState<{
+    "3-months": any[];
+    "13-months": any[];
+  }>({
+    "3-months": [],
+    "13-months": [],
+  });
   const [trendLoading, setTrendLoading] = useState(false);
+  const [trendRange, setTrendRange] = useState<"3-months" | "13-months">(
+    "3-months",
+  );
   const [trendFilter, setTrendFilter] = useState<
     "all" | "consumable" | "borrowable"
   >("all");
@@ -455,7 +464,7 @@ export function AnalyticsPage() {
     setTotalRequestsWeek(count || 0);
   };
 
-  const fetchMonthlyTrend = async () => {
+  const fetchMonthlyTrend = async (months: 3 | 13) => {
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonthIndex = now.getMonth();
@@ -474,7 +483,22 @@ export function AnalyticsPage() {
       "Dec",
     ];
 
-    // 1. Pre-build the 13 monthly buckets (prevents missing months if there's no data)
+    const lookbackMonths = months - 1;
+    const startDate = new Date(
+      currentYear,
+      currentMonthIndex - lookbackMonths,
+      1,
+    );
+    const endDate = new Date(
+      currentYear,
+      currentMonthIndex + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    );
+
     const trendByMonth: Record<
       string,
       {
@@ -486,7 +510,7 @@ export function AnalyticsPage() {
     > = {};
     const monthOrder: string[] = [];
 
-    for (let i = 0; i < 13; i++) {
+    for (let i = lookbackMonths; i >= 0; i--) {
       const date = new Date(currentYear, currentMonthIndex - i, 1);
       const mIndex = date.getMonth();
       const year = date.getFullYear();
@@ -505,7 +529,9 @@ export function AnalyticsPage() {
 
     const { data: historyRows, error } = await supabase
       .from("inventory_history")
-      .select("total_qty_issued, snapshot_date, period_label, item_type");
+      .select("total_qty_issued, snapshot_date, period_label, item_type")
+      .gte("snapshot_date", startDate.toISOString())
+      .lte("snapshot_date", endDate.toISOString());
 
     if (error) {
       console.error("Failed to load monthly trend history:", error);
@@ -579,20 +605,34 @@ export function AnalyticsPage() {
     }));
 
     setMonthlyTrendData(trendData);
+    setTrendDataCache((prev) => ({
+      ...prev,
+      "13-months": months === 13 ? trendData : prev["13-months"],
+      "3-months": months === 3 ? trendData : trendData.slice(-3),
+    }));
   };
 
-  const loadMonthlyTrend = async () => {
+  const loadTrend = async (range: "3-months" | "13-months") => {
+    if (trendDataCache[range].length) {
+      setMonthlyTrendData(trendDataCache[range]);
+      return;
+    }
+
     setTrendLoading(true);
     try {
-      await fetchMonthlyTrend();
-      setTrendLoaded(true);
+      await fetchMonthlyTrend(range === "3-months" ? 3 : 13);
     } catch (error) {
-      console.error("Failed to load 13-month trend:", error);
-      toast.error("Failed to load 13-month trend data.");
+      console.error("Failed to load trend data:", error);
+      toast.error("Failed to load trend data.");
     } finally {
       setTrendLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadTrend(trendRange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trendRange]);
 
   const fetchTopRequestedItems = async () => {
     // 1. Calculate the start of last month to prevent pulling years of dead data
@@ -813,7 +853,8 @@ export function AnalyticsPage() {
     const monthYearMatch = label.match(monthYearRegex);
     if (monthYearMatch) {
       const monthName =
-        monthYearMatch[1][0].toUpperCase() + monthYearMatch[1].slice(1).toLowerCase();
+        monthYearMatch[1][0].toUpperCase() +
+        monthYearMatch[1].slice(1).toLowerCase();
       const monthIndex = monthNameToIndex[monthName];
       const year = Number(monthYearMatch[2]);
       return { monthIndex, year, isRange: false };
@@ -878,7 +919,10 @@ export function AnalyticsPage() {
     });
 
     setAvailableMonths(
-      monthOptions.map((entry) => ({ value: entry.value, label: entry.displayLabel })),
+      monthOptions.map((entry) => ({
+        value: entry.value,
+        label: entry.displayLabel,
+      })),
     );
 
     if (monthOptions.length > 0) {
@@ -2725,45 +2769,41 @@ export function AnalyticsPage() {
                   Actual history of items distributed over time
                 </p>
               </div>
-              <div className="flex gap-2">
-                {(["all", "consumable", "borrowable"] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setTrendFilter(f)}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      trendFilter === f
-                        ? f === "all"
-                          ? "bg-blue-500 text-white"
-                          : f === "consumable"
-                            ? "bg-green-500 text-white"
-                            : "bg-purple-500 text-white"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    }`}
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <span className="font-medium">Range</span>
+                  <select
+                    value={trendRange}
+                    onChange={(e) =>
+                      setTrendRange(e.target.value as "3-months" | "13-months")
+                    }
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   >
-                    {f === "all"
-                      ? "All Items"
-                      : f === "consumable"
-                        ? "JMS Items"
-                        : "GYM Items"}
-                  </button>
-                ))}
+                    <option value="3-months">3 Months</option>
+                    <option value="13-months">13 Months</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <span className="font-medium">Items</span>
+                  <select
+                    value={trendFilter}
+                    onChange={(e) =>
+                      setTrendFilter(
+                        e.target.value as "all" | "consumable" | "borrowable",
+                      )
+                    }
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="all">All</option>
+                    <option value="consumable">JMS</option>
+                    <option value="borrowable">GYM</option>
+                  </select>
+                </label>
               </div>
             </div>
-            {!trendLoaded ? (
-              <div className="h-[300px] flex flex-col items-center justify-center text-gray-600 gap-4">
-                <p className="text-sm text-gray-500 text-center max-w-xl">
-                  Click here to view the 13-Month Trend. This will load the trend
-                  data only when you need it, reducing Supabase memory usage.
-                </p>
-                <button
-                  onClick={loadMonthlyTrend}
-                  disabled={trendLoading}
-                  className="px-5 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
-                >
-                  {trendLoading
-                    ? "Loading 13-month trend..."
-                    : "Click here to view the 13-Month Trend"}
-                </button>
+            {trendLoading ? (
+              <div className="h-[300px] flex items-center justify-center text-gray-600">
+                Loading trend data...
               </div>
             ) : trendChartData.length > 0 ? (
               <div style={{ width: "100%", position: "relative" }}>
